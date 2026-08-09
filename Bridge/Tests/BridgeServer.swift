@@ -30,13 +30,29 @@ final class BridgeServer: XCTestCase {
 
     @MainActor
     func testServe() throws {
+        // Read from argv first, environment second.
+        //
+        // `SIMCTL_CHILD_*` reaches the test process on an iPhone simulator but
+        // not on an iPad one, where the test then skipped and the bridge simply
+        // never answered — a silent failure that looked like a hang. Launch
+        // arguments arrive on both (`-XCTest` itself proves it), so they are the
+        // reliable channel; the environment stays as a fallback for hosts that
+        // set it.
         let environment = ProcessInfo.processInfo.environment
-        let port = environment["LOUPE_BRIDGE_PORT"].flatMap { UInt16($0) } ?? 18110
+        let arguments = ProcessInfo.processInfo.arguments
+        func argument(_ name: String) -> String? {
+            guard let index = arguments.firstIndex(of: name), index + 1 < arguments.count else {
+                return nil
+            }
+            return arguments[index + 1]
+        }
+        let port = (argument("-loupePort") ?? environment["LOUPE_BRIDGE_PORT"])
+            .flatMap { UInt16($0) } ?? 18110
         // No token means refuse to serve, not serve everything: loopback on a
         // shared machine is not a privacy boundary, and failing open here would
         // hand any local process a way to drive the device.
-        let token = environment["LOUPE_BRIDGE_TOKEN"] ?? ""
-        try XCTSkipIf(token.isEmpty, "LOUPE_BRIDGE_TOKEN is required")
+        let token = argument("-loupeToken") ?? environment["LOUPE_BRIDGE_TOKEN"] ?? ""
+        try XCTSkipIf(token.isEmpty, "no token supplied via -loupeToken or LOUPE_BRIDGE_TOKEN")
         executionTimeAllowance = Self.sessionLimit
 
         let listener = try Listener(port: port)

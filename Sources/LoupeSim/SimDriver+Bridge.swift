@@ -8,11 +8,10 @@ extension SimDriver {
         let device = try await ensureReady().device
         if let existing = liveBridge.value { return existing }
         let bridge = try await Bridge.live(for: device.udid)
-        // Point it at whatever app is already frontmost, so `describe` works
-        // without the caller having to launch anything first — matching how the
-        // mac: and web: surfaces behave.
-        if let bundleID = await Self.frontmostApp(on: device.udid) {
-            _ = try? await bridge.attach(bundleID: bundleID, restart: false)
+        // Attach to the app this device is being driven against, if one has been
+        // recorded by a previous `launch`.
+        if let recorded = (try? Bridge.load(device.udid))?.app {
+            _ = try? await bridge.attach(bundleID: recorded, restart: false)
         }
         liveBridge.value = bridge
         return bridge

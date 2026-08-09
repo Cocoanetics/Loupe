@@ -7,113 +7,124 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
-		46B0DEA7DB8B6F505420C31A /* BridgeServer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 16A81CAA67EDD4EDE99592A2 /* BridgeServer.swift */; };
-		9E80490F45E7CB249B0F0D76 /* Tree.swift in Sources */ = {isa = PBXBuildFile; fileRef = DFE5FFA880B9C752E9AE76C9 /* Tree.swift */; };
-		D13843E58FCD1BF1DD00E1B9 /* HTTP.swift in Sources */ = {isa = PBXBuildFile; fileRef = BE8C46F51849581D247C4814 /* HTTP.swift */; };
+		81D1769C90CCC10416063142 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 23737FEBCA38F4AEEA8948E5 /* ContentView.swift */; };
+		BCE55C01AA5C042FDBE833D1 /* TaskDemoApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1E4501DBAD5E108B89346F38 /* TaskDemoApp.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
-		16A81CAA67EDD4EDE99592A2 /* BridgeServer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BridgeServer.swift; sourceTree = "<group>"; };
-		BE8C46F51849581D247C4814 /* HTTP.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HTTP.swift; sourceTree = "<group>"; };
-		C182D4C713BF0634A2B6BE00 /* LoupeBridgeUITests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = LoupeBridgeUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
-		DFE5FFA880B9C752E9AE76C9 /* Tree.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tree.swift; sourceTree = "<group>"; };
+		1E4501DBAD5E108B89346F38 /* TaskDemoApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TaskDemoApp.swift; sourceTree = "<group>"; };
+		23737FEBCA38F4AEEA8948E5 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
+		ECD3ABC9953D9BF10FAFD51F /* TaskDemo.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = TaskDemo.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXGroup section */
-		1E8AA304DF2AF0EBB8EB8AD9 = {
+		73231DC29433F183CC6F6FC4 /* Products */ = {
 			isa = PBXGroup;
 			children = (
-				2195D98A60B5C5D6F7FD68E1 /* Tests */,
-				9F530927BE93DE3F2B6537B3 /* Products */,
-			);
-			sourceTree = "<group>";
-		};
-		2195D98A60B5C5D6F7FD68E1 /* Tests */ = {
-			isa = PBXGroup;
-			children = (
-				16A81CAA67EDD4EDE99592A2 /* BridgeServer.swift */,
-				BE8C46F51849581D247C4814 /* HTTP.swift */,
-				DFE5FFA880B9C752E9AE76C9 /* Tree.swift */,
-			);
-			path = Tests;
-			sourceTree = "<group>";
-		};
-		9F530927BE93DE3F2B6537B3 /* Products */ = {
-			isa = PBXGroup;
-			children = (
-				C182D4C713BF0634A2B6BE00 /* LoupeBridgeUITests.xctest */,
+				ECD3ABC9953D9BF10FAFD51F /* TaskDemo.app */,
 			);
 			name = Products;
+			sourceTree = "<group>";
+		};
+		B1DA5D4393B331143647AFF8 /* Sources */ = {
+			isa = PBXGroup;
+			children = (
+				23737FEBCA38F4AEEA8948E5 /* ContentView.swift */,
+				1E4501DBAD5E108B89346F38 /* TaskDemoApp.swift */,
+			);
+			path = Sources;
+			sourceTree = "<group>";
+		};
+		B749375FC790B473D8501EAF = {
+			isa = PBXGroup;
+			children = (
+				B1DA5D4393B331143647AFF8 /* Sources */,
+				73231DC29433F183CC6F6FC4 /* Products */,
+			);
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
-		45C4286366B4FB3B78D29E30 /* LoupeBridgeUITests */ = {
+		6EEA41E2DE52414F7C380D4C /* TaskDemo */ = {
 			isa = PBXNativeTarget;
-			buildConfigurationList = 9B31DBE337A6E3CA4CF60C61 /* Build configuration list for PBXNativeTarget "LoupeBridgeUITests" */;
+			buildConfigurationList = 6C037A6D365F972C76F4B651 /* Build configuration list for PBXNativeTarget "TaskDemo" */;
 			buildPhases = (
-				D88685DB6117BCFA359E6B41 /* Sources */,
+				0D716BDE6B170F95C2CA4B9B /* Sources */,
 			);
 			buildRules = (
 			);
 			dependencies = (
 			);
-			name = LoupeBridgeUITests;
+			name = TaskDemo;
 			packageProductDependencies = (
 			);
-			productName = LoupeBridgeUITests;
-			productReference = C182D4C713BF0634A2B6BE00 /* LoupeBridgeUITests.xctest */;
-			productType = "com.apple.product-type.bundle.ui-testing";
+			productName = TaskDemo;
+			productReference = ECD3ABC9953D9BF10FAFD51F /* TaskDemo.app */;
+			productType = "com.apple.product-type.application";
 		};
 /* End PBXNativeTarget section */
 
 /* Begin PBXProject section */
-		AD9FF4EBDC7836A4DD92AAC7 /* Project object */ = {
+		EB777385E19167CC127650AC /* Project object */ = {
 			isa = PBXProject;
 			attributes = {
 				BuildIndependentTargetsInParallel = YES;
 				LastUpgradeCheck = 1430;
 				TargetAttributes = {
-					45C4286366B4FB3B78D29E30 = {
-						ProvisioningStyle = Automatic;
-					};
 				};
 			};
-			buildConfigurationList = 9542E44B7FF4178A1F711EC6 /* Build configuration list for PBXProject "LoupeBridge" */;
+			buildConfigurationList = 0A647D43939C6C8678D411F9 /* Build configuration list for PBXProject "TaskDemo" */;
 			developmentRegion = en;
 			hasScannedForEncodings = 0;
 			knownRegions = (
 				Base,
 				en,
 			);
-			mainGroup = 1E8AA304DF2AF0EBB8EB8AD9;
+			mainGroup = B749375FC790B473D8501EAF;
 			minimizedProjectReferenceProxies = 1;
 			preferredProjectObjectVersion = 77;
-			productRefGroup = 9F530927BE93DE3F2B6537B3 /* Products */;
+			productRefGroup = 73231DC29433F183CC6F6FC4 /* Products */;
 			projectDirPath = "";
 			projectRoot = "";
 			targets = (
-				45C4286366B4FB3B78D29E30 /* LoupeBridgeUITests */,
+				6EEA41E2DE52414F7C380D4C /* TaskDemo */,
 			);
 		};
 /* End PBXProject section */
 
 /* Begin PBXSourcesBuildPhase section */
-		D88685DB6117BCFA359E6B41 /* Sources */ = {
+		0D716BDE6B170F95C2CA4B9B /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				46B0DEA7DB8B6F505420C31A /* BridgeServer.swift in Sources */,
-				D13843E58FCD1BF1DD00E1B9 /* HTTP.swift in Sources */,
-				9E80490F45E7CB249B0F0D76 /* Tree.swift in Sources */,
+				81D1769C90CCC10416063142 /* ContentView.swift in Sources */,
+				BCE55C01AA5C042FDBE833D1 /* TaskDemoApp.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXSourcesBuildPhase section */
 
 /* Begin XCBuildConfiguration section */
-		03E277136023980D45AF0D43 /* Debug */ = {
+		0341F99FBE06A81689FA66A2 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_IDENTITY = "iPhone Developer";
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
+				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.cocoanetics.loupe.examples.taskdemo;
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
+		03D9AA12BF8F9CC2473396BD /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ALWAYS_SEARCH_USER_PATHS = NO;
@@ -148,7 +159,6 @@
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
 				CODE_SIGNING_ALLOWED = NO;
 				CODE_SIGNING_REQUIRED = NO;
-				CODE_SIGN_STYLE = Automatic;
 				COPY_PHASE_STRIP = NO;
 				DEBUG_INFORMATION_FORMAT = dwarf;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
@@ -170,18 +180,35 @@
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
 				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
 				MTL_FAST_MATH = YES;
-				ONLY_ACTIVE_ARCH = NO;
+				ONLY_ACTIVE_ARCH = YES;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = iphoneos;
 				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
 				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
-				SWIFT_TREAT_WARNINGS_AS_ERRORS = NO;
 				SWIFT_VERSION = 6.0;
 				TARGETED_DEVICE_FAMILY = "1,2";
 			};
 			name = Debug;
 		};
-		32CC52D154F148C84E92ABD3 /* Release */ = {
+		BC9F61575EA0DB94C130A4C9 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_IDENTITY = "iPhone Developer";
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
+				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.cocoanetics.loupe.examples.taskdemo;
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		E2E2D36008A6F59CF0F0A0C3 /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ALWAYS_SEARCH_USER_PATHS = NO;
@@ -216,7 +243,6 @@
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
 				CODE_SIGNING_ALLOWED = NO;
 				CODE_SIGNING_REQUIRED = NO;
-				CODE_SIGN_STYLE = Automatic;
 				COPY_PHASE_STRIP = NO;
 				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
 				ENABLE_NS_ASSERTIONS = NO;
@@ -232,45 +258,11 @@
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
 				MTL_ENABLE_DEBUG_INFO = NO;
 				MTL_FAST_MATH = YES;
-				ONLY_ACTIVE_ARCH = NO;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = iphoneos;
 				SWIFT_COMPILATION_MODE = wholemodule;
 				SWIFT_OPTIMIZATION_LEVEL = "-O";
-				SWIFT_TREAT_WARNINGS_AS_ERRORS = NO;
 				SWIFT_VERSION = 6.0;
-				TARGETED_DEVICE_FAMILY = "1,2";
-			};
-			name = Release;
-		};
-		71D452BACC308DFE2AC3F079 /* Debug */ = {
-			isa = XCBuildConfiguration;
-			buildSettings = {
-				BUNDLE_LOADER = "$(TEST_HOST)";
-				GENERATE_INFOPLIST_FILE = YES;
-				LD_RUNPATH_SEARCH_PATHS = (
-					"$(inherited)",
-					"@executable_path/Frameworks",
-					"@loader_path/Frameworks",
-				);
-				PRODUCT_BUNDLE_IDENTIFIER = com.cocoanetics.loupe.bridge.uitests;
-				SDKROOT = iphoneos;
-				TARGETED_DEVICE_FAMILY = "1,2";
-			};
-			name = Debug;
-		};
-		A9C50E9E6548B7D6151C63D4 /* Release */ = {
-			isa = XCBuildConfiguration;
-			buildSettings = {
-				BUNDLE_LOADER = "$(TEST_HOST)";
-				GENERATE_INFOPLIST_FILE = YES;
-				LD_RUNPATH_SEARCH_PATHS = (
-					"$(inherited)",
-					"@executable_path/Frameworks",
-					"@loader_path/Frameworks",
-				);
-				PRODUCT_BUNDLE_IDENTIFIER = com.cocoanetics.loupe.bridge.uitests;
-				SDKROOT = iphoneos;
 				TARGETED_DEVICE_FAMILY = "1,2";
 			};
 			name = Release;
@@ -278,25 +270,25 @@
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
-		9542E44B7FF4178A1F711EC6 /* Build configuration list for PBXProject "LoupeBridge" */ = {
+		0A647D43939C6C8678D411F9 /* Build configuration list for PBXProject "TaskDemo" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
-				03E277136023980D45AF0D43 /* Debug */,
-				32CC52D154F148C84E92ABD3 /* Release */,
+				03D9AA12BF8F9CC2473396BD /* Debug */,
+				E2E2D36008A6F59CF0F0A0C3 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Debug;
 		};
-		9B31DBE337A6E3CA4CF60C61 /* Build configuration list for PBXNativeTarget "LoupeBridgeUITests" */ = {
+		6C037A6D365F972C76F4B651 /* Build configuration list for PBXNativeTarget "TaskDemo" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
-				71D452BACC308DFE2AC3F079 /* Debug */,
-				A9C50E9E6548B7D6151C63D4 /* Release */,
+				BC9F61575EA0DB94C130A4C9 /* Debug */,
+				0341F99FBE06A81689FA66A2 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Debug;
 		};
 /* End XCConfigurationList section */
 	};
-	rootObject = AD9FF4EBDC7836A4DD92AAC7 /* Project object */;
+	rootObject = EB777385E19167CC127650AC /* Project object */;
 }

@@ -27,6 +27,10 @@ settings:
     CODE_SIGNING_ALLOWED: "NO"
     CODE_SIGNING_REQUIRED: "NO"
     SWIFT_TREAT_WARNINGS_AS_ERRORS: "NO"
+    # Universal. Without this the runner is an iPhone-only app, which iPad runs
+    # in compatibility mode — a scaled black window that never starts its test,
+    # so the bridge silently never answers.
+    TARGETED_DEVICE_FAMILY: "1,2"
 
 targets:
   LoupeBridgeUITests:

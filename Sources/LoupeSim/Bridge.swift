@@ -32,6 +32,15 @@ public struct Bridge: Sendable {
         var port: UInt16
         var token: String
         var startedAt: Date
+        /// The app this device is being driven against.
+        ///
+        /// Recorded rather than detected: every `loupe` invocation is its own
+        /// process, and there is no reliable public way to ask a simulator which
+        /// app is frontmost — `launchctl list` reports running processes in
+        /// arbitrary order, so a backgrounded app can easily win. Answering
+        /// `describe` with the wrong app's tree is silently wrong, which is worse
+        /// than any error, so the app Loupe launched is remembered instead.
+        var app: String?
     }
 
     let udid: String
@@ -80,6 +89,16 @@ public struct Bridge: Sendable {
         if !arguments.isEmpty { body["arguments"] = arguments }
         let reply = try await send(restart ? "/launch" : "/activate", body: body, timeout: 90)
         return reply["ok"] as? Bool ?? false
+    }
+
+    /// Poll until the bridge answers, or give up.
+    func answers(within seconds: TimeInterval) async throws -> Bool {
+        let deadline = Date().addingTimeInterval(seconds)
+        while Date() < deadline {
+            if (try? await health()) != nil { return true }
+            try await Task.sleep(for: .milliseconds(400))
+        }
+        return false
     }
 
     func terminate() async throws {

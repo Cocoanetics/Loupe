@@ -88,6 +88,16 @@ additions worth having (`waitForExistence(timeout:orFailure:)`,
 surface knowingly departs from Apple's — also printed by
 `loupe script --divergences`.
 
+## Driving your own app while you build it
+
+If you are an agent (or working with one), [SKILL.md](SKILL.md) is the short
+version: how to check UI work by driving the running app instead of guessing —
+look, change, look again — and how to produce proof that a fix worked.
+
+[Examples/TaskDemo](Examples/TaskDemo) is a small universal SwiftUI app with the
+check written the way an agent would write it, running unchanged on iPhone and
+iPad.
+
 ## Why it exists
 
 Agents that fix UI bugs cannot show their work. They can describe a change, but
@@ -199,10 +209,11 @@ remembered one.
 | --- | :-: | :-: | :-: |
 | Screenshot | ✅ | ✅ (even occluded/minimized/hidden) | ✅ |
 | Full-page screenshot | ✅ | — | — |
-| Element tree | ✅ (DOM) | ✅ (accessibility, incl. menu bar) | ✗ ² |
-| Press / click | ✅ | ✅ | ✗ ² |
-| Set value | ✅ | ✅ (full Unicode, atomic) | ✗ ² |
-| Type / keys | ✅ | ✅ | ✗ ² |
+| Element tree | ✅ (DOM) | ✅ (accessibility, incl. menu bar) | ✅ (XCUITest) ² |
+| Press / click | ✅ | ✅ | ✅ ² |
+| Set value | ✅ | ✅ (full Unicode, atomic) | ✅ ² |
+| Type / keys | ✅ | ✅ | ✅ ² |
+| Swipe / scroll | ✅ | ✅ | ✅ ² |
 | Navigate / deep link | ✅ | ✅ | ✅ |
 | Launch app | — | ✅ (without activating) | ✅ |
 | Run JavaScript | ✅ | — | — |
@@ -212,10 +223,14 @@ remembered one.
 ¹ Supported, but rarely needed: a Mac app and a simulator already outlive your
 commands.
 
-² Public `simctl` has no tap, type, or accessibility tree — those need private
-API (idb/AXe) or an XCUITest runner. Loupe refuses these loudly rather than
-pretending; use `launch` + deep links to reach a screen, and screenshots to
-inspect it. An XCUITest runner bridge is the planned way to close this.
+² Through a UI-test bundle Loupe builds once and installs on the device, which
+then answers over loopback. `simctl` exposes no elements at all, and the
+accessibility Simulator.app forwards to macOS is flattened past usefulness — a
+tab bar arrives as a childless group — so XCUITest is the only complete view.
+Because a UI-test bundle needs no test host, one runner drives every installed
+app on every booted device. First use costs a build (~40 s, then cached in
+`~/.loupe/bridge`); a session starts in about three seconds. See
+[Docs/xcui-scripts.md](Docs/xcui-scripts.md).
 
 ### Apps with poor accessibility
 
@@ -332,7 +347,7 @@ view and concluding the content is not there:
 scrolled vertically by 340 points of the 400 requested (scroll bar 0.120 → 0.395 of a 1236 point range)
 ```
 
-Simulators refuse both — public `simctl` cannot synthesize a drag.
+Simulators swipe instead: the bridge sends a real drag through `XCUICoordinate`, so momentum and rubber-banding behave as they would under a finger.
 
 ### Waiting for the right thing
 

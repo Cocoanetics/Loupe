@@ -18,14 +18,37 @@ extension XCUIModule {
         let session = session
         let defaultTarget = defaultTarget
 
-        // `XCUIApplication(bundleIdentifier:)` — the spelling 21 of the 30
-        // constructions in the surveyed test corpus already use. Loupe's mac
-        // locator matches a bundle identifier, so it maps straight across.
+        // `XCUIApplication(bundleIdentifier:)` — by far the most common spelling
+        // in real tests, and the one that has to mean the same thing everywhere.
+        //
+        // A bundle id says *which app*, never *where*. So when the runner was
+        // pointed at a device (`--target sim:booted`), the app is that bundle id
+        // on that device; with no target, it is a Mac app, whose locator happens
+        // to accept a bundle id directly.
         interpreter.bridges["init XCUIApplication(bundleIdentifier:)"] = .`init` { args in
             let bundleID = try Boxing.string(
                 args.first ?? .void, "XCUIApplication(bundleIdentifier:)")
+            if let defaultTarget, defaultTarget.surface == .sim {
+                return Boxing.value(
+                    AppBox(target: defaultTarget, bundleID: bundleID, session: session))
+            }
             return Boxing.value(
                 AppBox(target: Target(surface: .mac, locator: bundleID), session: session))
+        }
+
+        // Both at once, for a script that should not depend on how the runner
+        // was invoked: `XCUIApplication(target: "sim:booted", bundleIdentifier: …)`.
+        interpreter.bridges["init XCUIApplication(target:bundleIdentifier:)"] = .`init` { args in
+            guard args.count >= 2 else {
+                throw RuntimeError.invalid(
+                    "XCUIApplication(target:bundleIdentifier:) expects a target and a bundle id")
+            }
+            let raw = try Boxing.string(args[0], "XCUIApplication(target:)")
+            let bundleID = try Boxing.string(args[1], "XCUIApplication(bundleIdentifier:)")
+            do {
+                return Boxing.value(
+                    AppBox(target: try Target.parse(raw), bundleID: bundleID, session: session))
+            } catch { throw Boxing.runtimeError(error) }
         }
 
         // Not XCUI. A script has to be able to say "the web app" or "the

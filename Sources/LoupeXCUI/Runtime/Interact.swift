@@ -95,6 +95,13 @@ extension ElementBox {
 
 extension AppBox {
 
+    /// What `launch()` should actually start: the explicit bundle id when there
+    /// is one, otherwise the target's own locator (which on `mac:` *is* the app).
+    var launchIdentifier: String? {
+        if let bundleID { return bundleID }
+        return target.surface == .sim ? nil : target.locator
+    }
+
     /// XCUI launches a fresh copy of the app under test. Loupe attaches to
     /// whatever is running, which is a real difference and worth being honest
     /// about: `launch()` here means "make sure it is running and reachable".
@@ -107,7 +114,15 @@ extension AppBox {
         defer { didLaunch = true }
         switch target.surface {
             case .mac, .sim:
-                let result = try await Loupe.perform(.launch(target.locator), on: driver)
+                // On a simulator the target names the device, so the app has to
+                // come from the bundle id; launching the locator would try to
+                // open an app called "booted".
+                guard let identifier = launchIdentifier else {
+                    throw LoupeError.failed(
+                        "\(target) names a device, not an app — say which app to launch with "
+                            + "XCUIApplication(bundleIdentifier: \"com.example.App\")")
+                }
+                let result = try await Loupe.perform(.launch(identifier), on: driver)
                 if !launchEnvironment.isEmpty || !launchArguments.isEmpty {
                     guard result.message.localizedCaseInsensitiveContains("launched") else {
                         throw LoupeError.unsupported(
@@ -133,7 +148,10 @@ extension AppBox {
             throw LoupeError.unsupported(
                 "terminate() applies to mac: and sim: targets, not \(target.surface.rawValue):")
         }
-        return try await Loupe.perform(.terminate(target.locator), on: driver)
+        guard let identifier = launchIdentifier else {
+            throw LoupeError.failed("\(target) names a device, not an app — nothing to terminate")
+        }
+        return try await Loupe.perform(.terminate(identifier), on: driver)
     }
 
     func open(_ url: String) async throws -> ActionResult {

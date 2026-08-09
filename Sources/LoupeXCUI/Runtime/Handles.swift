@@ -7,15 +7,24 @@ import LoupeKit
 /// it: `app.launchEnvironment["KEY"] = …` in one helper has to be visible to the
 /// `app.launch()` in another.
 final class AppBox: @unchecked Sendable {
+    /// Where the app lives: a device, a page, a session.
     let target: Target
+    /// Which app, when the target alone does not say.
+    ///
+    /// `mac:Safari` names both at once, but `sim:booted` names only the device —
+    /// an iOS app is identified by bundle id *within* it. Keeping the two apart
+    /// is what lets `XCUIApplication(bundleIdentifier:)` mean the same thing on
+    /// both surfaces.
+    let bundleID: String?
     let session: XCUISession
     var launchEnvironment: [String: String] = [:]
     var launchArguments: [String] = []
     /// Whether `launch()` has run, so `state` can answer without probing.
     var didLaunch = false
 
-    init(target: Target, session: XCUISession) {
+    init(target: Target, bundleID: String? = nil, session: XCUISession) {
         self.target = target
+        self.bundleID = bundleID
         self.session = session
     }
 

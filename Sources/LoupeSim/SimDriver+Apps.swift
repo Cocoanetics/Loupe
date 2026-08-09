@@ -53,6 +53,15 @@ extension SimDriver {
             .map { $0.trimmingCharacters(in: .whitespaces) }
             .flatMap { Int($0) }
 
+        // Re-point the bridge at what was just launched. Without this the bridge
+        // keeps answering for whichever app it attached to first, so `describe`
+        // after `launch` returns a *different app's* tree — successfully, and
+        // silently, which is the worst way for this to be wrong.
+        Bridge.rememberApp(bundleID, on: device.udid)
+        if let bridge = liveBridge.value {
+            _ = try? await bridge.attach(bundleID: bundleID, restart: false)
+        }
+
         var message = "launched \(bundleID) on \(device.name)"
         if let installedFrom { message += " (installed from \(installedFrom))" }
         if let pid { message += " — pid \(pid)" }
