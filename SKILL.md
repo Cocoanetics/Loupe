@@ -96,7 +96,7 @@ XCTAssertTrue(app.staticTexts["Done"].waitForExistence(timeout: 10))
 ```
 
 ```bash
-loupe script check.swift --target sim:booted
+loupe script check.swift --target "sim:iPhone 17 Pro"
 ```
 
 A failed expectation **records and keeps going**, so one run reports every problem
@@ -132,7 +132,7 @@ on iPhone and two columns on iPad, so the same tap sequence lands somewhere else
 Run the same script against both — that is what catches it:
 
 ```bash
-loupe script check.swift --target sim:booted
+loupe script check.swift --target "sim:iPhone 17 Pro"
 loupe script check.swift --target "sim:iPad Pro 11-inch (M5)"
 ```
 
@@ -141,6 +141,10 @@ pops back on iPhone and is a harmless no-op on iPad.
 
 **Say which app, on a simulator.** `sim:booted` names the *device*; the bundle id
 names the app. Pass the target to the runner and the bundle id in the script.
+
+**Name the device when more than one is booted.** `sim:booted` refuses to guess
+rather than picking silently — running an iPhone flow against an iPad looks like
+a bug in the app, not a mistargeted command.
 
 **Secrets come from the environment.** Write `env("APP_PASSWORD")` in a script or
 `{{APP_PASSWORD}}` in a CLI argument. Never put a real credential in a file you

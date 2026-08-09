@@ -39,13 +39,33 @@ extension SimDriver {
             bundleID = path.bundleID
         }
 
-        var args = ["launch", "--terminate-running-process", device.udid, bundleID]
+        // No --terminate-running-process: while the bridge holds the app under
+        // automation, asking iOS to kill and reopen it at the same moment is
+        // refused outright (FBSOpenApplicationServiceErrorDomain code 4). Plain
+        // launch activates a running app, which is what "make sure it is up"
+        // means anyway.
+        var args = ["launch", device.udid, bundleID]
         args.append(contentsOf: arguments)
 
         let childEnvironment = environment.reduce(into: [String: String]()) { result, pair in
             let key = pair.key.hasPrefix("SIMCTL_CHILD_") ? pair.key : "SIMCTL_CHILD_" + pair.key
             result[key] = pair.value
         }
+        // Launched through the bridge, because XCUITest holds the app under
+        // automation and iOS refuses a simctl open while it does
+        // (FBSOpenApplicationServiceErrorDomain code 4) — the two are fighting
+        // over the same app. XCUIApplication.launch() is the supported route,
+        // and it leaves the bridge pointed at the app afterwards.
+        if let bridge = try? await self.bridge() {
+            _ = try await bridge.attach(
+                bundleID: bundleID, restart: true,
+                environment: environment, arguments: arguments)
+            Bridge.rememberApp(bundleID, on: device.udid)
+            var message = "launched \(bundleID) on \(device.name)"
+            if let installedFrom { message += " (installed from \(installedFrom))" }
+            return ActionResult(message: message)
+        }
+
         let output = try await Simctl.check(args, environment: childEnvironment)
 
         // stdout is exactly `com.example.app: 19493`.

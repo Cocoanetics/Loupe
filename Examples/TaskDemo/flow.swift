@@ -2,7 +2,7 @@
 // work. Runs unchanged on iPhone and iPad, which present this app very
 // differently — a push stack versus a two-column split.
 //
-//   loupe script Examples/TaskDemo/flow.swift --target sim:booted
+//   loupe script Examples/TaskDemo/flow.swift --target "sim:iPhone 17 Pro"
 //   loupe script Examples/TaskDemo/flow.swift --target "sim:iPad Pro 11-inch (M5)"
 //
 // The bundle id says which app; --target says which device.

@@ -14,7 +14,7 @@ fastest way to find out whether Loupe itself is pleasant to use.
 ```bash
 # iPhone
 xcrun simctl boot "iPhone 17 Pro"
-loupe script Examples/TaskDemo/flow.swift --target sim:booted
+loupe script Examples/TaskDemo/flow.swift --target "sim:iPhone 17 Pro"
 
 # the same file, iPad
 xcrun simctl boot "iPad Pro 11-inch (M5)"

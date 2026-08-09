@@ -58,6 +58,7 @@ final class BridgeServer: XCTestCase {
         let listener = try Listener(port: port)
         NSLog("LOUPE_BRIDGE listening on %d", Int(port))
 
+
         let session = AppSession()
         let deadline = Date().addingTimeInterval(Self.sessionLimit)
         while Date() < deadline {
@@ -99,6 +100,12 @@ private final class AppSession {
                     return (200, try activate(request))
                 case "/terminate":
                     try current().terminate()
+                    // Terminating the app under test leaves the runner frontmost
+                    // and blank; the home screen is a better thing to leave behind.
+                    XCUIDevice.shared.press(.home)
+                    return (200, ["ok": true])
+                case "/background":
+                    XCUIDevice.shared.press(.home)
                     return (200, ["ok": true])
                 case "/describe":
                     return (200, ["roots": [try Tree.node(of: try current())]])

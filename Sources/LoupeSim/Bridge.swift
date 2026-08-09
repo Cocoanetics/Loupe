@@ -41,6 +41,13 @@ public struct Bridge: Sendable {
         /// `describe` with the wrong app's tree is silently wrong, which is worse
         /// than any error, so the app Loupe launched is remembered instead.
         var app: String?
+        /// Whether this device needs the xcodebuild start path.
+        ///
+        /// Recorded because the fast path fails *slowly*: on an iPad simulator
+        /// the runner launches, XCTest connects, and the test simply never runs,
+        /// so the only signal is a twenty-second silence. Paying that once per
+        /// device is tolerable; paying it every session is not.
+        var needsXcodebuild: Bool?
     }
 
     let udid: String

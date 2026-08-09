@@ -17,11 +17,21 @@ extension Bridge {
                 return bridge
             }
             // Recorded but not answering: the runner died or the device rebooted.
-            remove(udid)
+            // The descriptor is left in place deliberately — it carries which
+            // app was being driven and which start path this device needs, and
+            // discarding that means relearning the slow way every restart.
         }
         let app = try await runnerApp(for: udid)
         try await install(app, on: udid)
-        return try await start(on: udid)
+        let bridge = try await start(on: udid)
+        // Point it at the app being driven if there is one; otherwise leave the
+        // device on its home screen rather than on the runner's blank window.
+        if let recorded = (try? load(udid))?.app {
+            _ = try? await bridge.attach(bundleID: recorded, restart: false)
+        } else {
+            _ = try? await bridge.perform(kind: "button", extra: ["button": "home"])
+        }
+        return bridge
     }
 
     // MARK: - Building
@@ -33,8 +43,11 @@ extension Bridge {
     /// known exactly, instead of being recovered from `-showBuildSettings`,
     /// which cannot resolve a destination for a scheme that has no app target.
     /// Only the finished `.app` is kept, in `~/.loupe/bridge`.
+    static var productsRoot: URL { root.appendingPathComponent("Products", isDirectory: true) }
+
     static func runnerApp(for udid: String) async throws -> URL {
-        let cached = root.appendingPathComponent("LoupeBridgeUITests-Runner.app")
+        let cached = productsRoot
+            .appendingPathComponent("Debug-iphonesimulator/LoupeBridgeUITests-Runner.app")
         if FileManager.default.fileExists(atPath: cached.path) { return cached }
 
         guard let project = projectURL() else {
@@ -62,12 +75,16 @@ extension Bridge {
                 "could not build the simulator bridge (exit \(build.status)):\n"
                     + (build.err.isEmpty ? build.out : build.err))
         }
+        // Keep the whole products tree, not just the .app: the xcodebuild
+        // fallback needs the .xctestrun that sits beside it, and that file
+        // addresses everything through __TESTROOT__, so it stays valid here.
+        // Caching only the .app left the plan in the system temp directory,
+        // where it is eventually swept and the next run silently rebuilt.
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
-        try? FileManager.default.removeItem(at: cached)
-        try FileManager.default.copyItem(at: product, to: cached)
-        // The scratch build is deliberately kept: the xcodebuild fallback needs
-        // the .xctestrun it produced, and that file points back into this tree.
-        // If it is cleaned up later, the next run just rebuilds.
+        try? FileManager.default.removeItem(at: productsRoot)
+        try FileManager.default.copyItem(
+            at: scratch.appendingPathComponent("Build/Products"), to: productsRoot)
+        try? FileManager.default.removeItem(at: scratch)
         return cached
     }
 
@@ -136,6 +153,9 @@ extension Bridge {
     }
 
     private static func start(on udid: String) async throws -> Bridge {
+        // Survives the restart, so a reconnect does not lose which app is being
+        // driven.
+        let previousApp = (try? load(udid))?.app
         // Launching an app that is already running re-focuses it and ignores the
         // new environment, so a stale runner would keep its old port and the
         // wait below would time out with everything apparently fine.
@@ -146,48 +166,26 @@ extension Bridge {
         let platform =
             "/Applications/Xcode.app/Contents/Developer/Platforms/iPhoneSimulator.platform"
 
-        // XCTRunner bootstraps itself given these two paths — no serialized
-        // XCTestConfiguration, no testmanagerd handshake, no xcodebuild. The
-        // `-XCTest` selector matters: without it the whole bundle runs
-        // alphabetically, which costs several seconds for nothing.
-        let environment = [
-            "SIMCTL_CHILD_DYLD_FRAMEWORK_PATH": "\(platform)/Developer/Library/Frameworks",
-            "SIMCTL_CHILD_DYLD_LIBRARY_PATH": "\(platform)/Developer/usr/lib",
-            "SIMCTL_CHILD_LOUPE_BRIDGE_PORT": "\(port)",
-            "SIMCTL_CHILD_LOUPE_BRIDGE_TOKEN": token
-        ]
-        let launch = try await Simctl.run(
-            [
-                "launch", udid, bundleID, "-XCTest", "BridgeServer/testServe",
-                // Passed as arguments, not only as SIMCTL_CHILD_ environment:
-                // the environment does not reach the test process on iPad
-                // simulators, where the runner then skipped in silence.
-                "-loupePort", "\(port)", "-loupeToken", token
-            ],
-            timeout: 120, environment: environment)
-        guard launch.status == 0 else {
-            throw LoupeError.failed("could not start the bridge runner:\n\(launch.diagnostics)")
-        }
-
         let bridge = Bridge(udid: udid, port: port, token: token)
-        if try await bridge.answers(within: 20) {
-            try save(Descriptor(udid: udid, port: port, token: token, startedAt: Date()))
-            return bridge
-        }
 
-        // The self-bootstrap works on iPhone simulators but not on iPad ones,
-        // where XCTest connects and then never runs the test. Rather than
-        // reporting a timeout, fall back to the supported path: xcodebuild
-        // starts the same bundle, reaches the same bridge, and costs a few
-        // seconds and one extra process.
+        // Always started through xcodebuild, never by launching the runner
+        // directly. Two reasons, each fatal on its own: on iPad simulators the
+        // direct route connects and then never runs the test; and the runner it
+        // produces is an ordinary app, so the moment it backgrounds itself to
+        // drive the app under test, iOS suspends it and the socket dies. Under
+        // xcodebuild, testmanagerd owns the session and keeps it alive.
         try await startViaXcodebuild(on: udid, port: port, token: token)
-        if try await bridge.answers(within: 90) {
-            try save(Descriptor(udid: udid, port: port, token: token, startedAt: Date()))
+        if try await bridge.answers(within: 120) {
+            try save(
+                Descriptor(
+                    udid: udid, port: port, token: token, startedAt: Date(),
+                    app: previousApp))
             return bridge
         }
         throw LoupeError.timeout(
-            "the simulator bridge did not answer on port \(port). Neither launching the runner "
-                + "directly nor `xcodebuild test-without-building` brought it up.")
+            "the simulator bridge did not answer on port \(port) within 120s. Check that "
+                + "`xcodebuild` can reach this device, and remove ~/.loupe/bridge to force a "
+                + "rebuild of the runner.")
     }
 
     /// Start the runner the supported way, in the background: this process never
@@ -202,24 +200,37 @@ extension Bridge {
         }
         // xcodebuild does not forward this process's environment to the test, so
         // the port and token have to be written into the .xctestrun itself.
-        let patched = try patch(testRun, port: port, token: token)
+        // Only one runner per device: a previous session's xcodebuild keeps its
+        // test alive forever, so without this they accumulate.
+        await stopXcodebuild(for: udid)
+        let patched = try patch(testRun, port: port, token: token, udid: udid)
+
+        // Detached through `nohup … &`, not spawned as a child. The test never
+        // ends, so xcodebuild never exits; as a child it would be torn down when
+        // this short-lived CLI process does, taking the bridge with it — which
+        // showed up as the connection dropping mid-flow on the *next* command.
+        let command = [
+            "nohup", "/usr/bin/xcrun", "xcodebuild", "test-without-building",
+            "-xctestrun", quoted(patched.path),
+            "-destination", quoted("platform=iOS Simulator,id=\(udid)"),
+            "-only-testing:LoupeBridgeUITests/BridgeServer/testServe",
+            ">/dev/null", "2>&1", "&"
+        ].joined(separator: " ")
 
         let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/xcrun")
-        process.arguments = [
-            "xcodebuild", "test-without-building",
-            "-xctestrun", patched.path,
-            "-destination", "platform=iOS Simulator,id=\(udid)",
-            "-only-testing:LoupeBridgeUITests/BridgeServer/testServe"
-        ]
+        process.executableURL = URL(fileURLWithPath: "/bin/sh")
+        process.arguments = ["-c", command]
         process.standardOutput = FileHandle.nullDevice
         process.standardError = FileHandle.nullDevice
         try process.run()
+        process.waitUntilExit()
     }
 
     /// Write the bridge's port and token into a copy of the test plan, since
     /// that is the only channel xcodebuild offers into the test process.
-    private static func patch(_ testRun: URL, port: UInt16, token: String) throws -> URL {
+    private static func patch(
+        _ testRun: URL, port: UInt16, token: String, udid: String
+    ) throws -> URL {
         let data = try Data(contentsOf: testRun)
         guard var plan = try PropertyListSerialization.propertyList(
             from: data, options: [], format: nil) as? [String: Any]
@@ -239,19 +250,39 @@ extension Bridge {
             plan[key] = target
         }
 
+        // Named per device. One shared filename meant a second device rewrote
+        // the first device's port and token, so whichever started last silently
+        // took over — and the other's bridge answered on a port nobody was
+        // asking about.
         let patched = testRun.deletingLastPathComponent()
-            .appendingPathComponent("loupe-bridge-session.xctestrun")
+            .appendingPathComponent("loupe-bridge-\(udid).xctestrun")
         let output = try PropertyListSerialization.data(
             fromPropertyList: plan, format: .xml, options: 0)
         try output.write(to: patched, options: .atomic)
         return patched
     }
 
+    /// Stop any xcodebuild still hosting a runner for this device.
+    private static func stopXcodebuild(for udid: String) async {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/pkill")
+        process.arguments = ["-f", "xcodebuild test-without-building.*\(udid)"]
+        process.standardOutput = FileHandle.nullDevice
+        process.standardError = FileHandle.nullDevice
+        try? process.run()
+        process.waitUntilExit()
+        // pkill returns before the process is gone; give it a beat so the port
+        // it held is free.
+        try? await Task.sleep(for: .milliseconds(600))
+    }
+
+    private static func quoted(_ value: String) -> String {
+        "'" + value.replacingOccurrences(of: "'", with: "'\\''") + "'"
+    }
+
     private static func xctestrunURL() -> URL? {
-        let products = FileManager.default.temporaryDirectory
-            .appendingPathComponent("loupe-bridge-build/Build/Products", isDirectory: true)
         let entries = (try? FileManager.default.contentsOfDirectory(
-            at: products, includingPropertiesForKeys: nil)) ?? []
+            at: productsRoot, includingPropertiesForKeys: nil)) ?? []
         return entries.first { $0.pathExtension == "xctestrun" }
     }
 

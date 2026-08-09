@@ -131,14 +131,26 @@ public final class SimDriver: UIDriver {
         let all = try await Simctl.devices()
 
         if locator.caseInsensitiveCompare("booted") == .orderedSame {
-            guard let booted = all.first(where: { $0.isBooted }) else {
+            let booted = all.filter(\.isBooted)
+            guard let first = booted.first else {
                 throw LoupeError.targetNotFound(
                     "sim:booted — no simulator is currently booted.\n"
                         + "  Fix: target a device by name instead (e.g. `sim:iPhone 17 Pro`) and Loupe "
                         + "will boot it, or boot one yourself with `xcrun simctl boot \"iPhone 17 Pro\"`.\n"
                         + inventory(all))
             }
-            return booted
+            // Refuse to guess. With several devices booted, picking one silently
+            // means a flow can run against a different device than the person
+            // reading the output believes — and an iPhone and an iPad present
+            // the same app very differently, so the result looks like a bug in
+            // the app rather than a mistargeted command.
+            guard booted.count == 1 else {
+                let names = booted.map { "sim:\($0.name)" }.joined(separator: "\n    ")
+                throw LoupeError.targetNotFound(
+                    "sim:booted is ambiguous — \(booted.count) simulators are booted.\n"
+                        + "  Name the one you mean:\n    \(names)")
+            }
+            return first
         }
 
         // A udid is an exact match. Compared case-insensitively only because
