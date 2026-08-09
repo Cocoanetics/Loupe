@@ -1,0 +1,26 @@
+included:
+  - Sources
+  - Tests
+
+excluded:
+  - .build
+  - .swiftpm
+  - "**/.build"
+  - "**/.swiftpm"
+
+# 4-space indentation is enforced by `.editorconfig` (read by Xcode and most
+# editors). SwiftLint's `indentation_width` rule is deliberately not enabled — it
+# rejects the multi-line condition continuation style used throughout, which is
+# standard and not worth reformatting away.
+
+# Match Xcode's default "Indent switch statement `case` labels in" setting.
+switch_case_alignment:
+  indented_cases: true
+
+identifier_name:
+  excluded:
+    - id
+    - x
+    - y
+    - dx
+    - dy

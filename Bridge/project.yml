@@ -1,0 +1,50 @@
+# The simulator bridge: a UI-test bundle that hosts a loopback HTTP server so the
+# Mac side can inspect and drive a booted simulator through the real XCUITest API.
+#
+# Deliberately has NO app target and NO TEST_HOST/TEST_TARGET_NAME. A UI-test
+# bundle can drive an arbitrary already-installed app by bundle id, so one runner
+# serves every app on every booted device — which is what makes shipping a single
+# prebuilt .app viable.
+#
+# Regenerate the .xcodeproj with `xcodegen generate` in this directory. The
+# generated project is committed so that building Loupe needs no extra tooling.
+name: LoupeBridge
+options:
+  bundleIdPrefix: com.cocoanetics.loupe
+  createIntermediateGroups: true
+  deploymentTarget:
+    iOS: "17.0"
+
+configs:
+  Debug: debug
+  Release: release
+
+settings:
+  base:
+    SWIFT_VERSION: "6.0"
+    ONLY_ACTIVE_ARCH: "NO"
+    CODE_SIGN_STYLE: Automatic
+    CODE_SIGNING_ALLOWED: "NO"
+    CODE_SIGNING_REQUIRED: "NO"
+    SWIFT_TREAT_WARNINGS_AS_ERRORS: "NO"
+
+targets:
+  LoupeBridgeUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    sources:
+      - Tests
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.cocoanetics.loupe.bridge.uitests
+        GENERATE_INFOPLIST_FILE: "YES"
+
+schemes:
+  LoupeBridge:
+    build:
+      targets:
+        LoupeBridgeUITests: [test]
+    test:
+      config: Debug
+      targets:
+        - LoupeBridgeUITests

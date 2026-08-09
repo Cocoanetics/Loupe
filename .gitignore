@@ -1,0 +1,11 @@
+.build/
+.swiftpm/
+/*.xcodeproj
+# The bridge's project IS committed, so building needs no xcodegen.
+!Bridge/LoupeBridge.xcodeproj/
+.DS_Store
+loupe-*.png
+*.xcresult
+DerivedData/
+.env*
+/proof/
