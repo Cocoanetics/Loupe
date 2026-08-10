@@ -37,12 +37,23 @@ extension UIDriver {
         if let exact = all.first(where: { $0.id == needle }) { return exact }
         if let byIdentifier = all.first(where: { $0.identifier == needle }) { return byIdentifier }
         if let byLabel = all.first(where: { $0.label == needle }) { return byLabel }
-        let fuzzy = all.filter { $0.matches(needle) }
-        // Prefer something actionable and on-screen over a bare static text that
-        // happens to contain the same words.
-        if let best = fuzzy.first(where: { !$0.actions.isEmpty && $0.enabled })
-            ?? fuzzy.first(where: { $0.enabled }) ?? fuzzy.first {
-            return best
+        // No exact hit. Report the near misses rather than acting on the best of
+        // them: a substring match is a guess, and a guess that presses something
+        // is the worst outcome this tool can produce — `press "de"` activating
+        // Delete Account reads exactly like success. Naming the candidates costs
+        // one round trip and leaves the choice where it belongs.
+        let candidates = all.filter { $0.matches(needle) }
+        guard candidates.isEmpty else {
+            let listed = candidates.prefix(6).map { node -> String in
+                let name = node.label ?? node.value ?? node.id
+                let identifier = node.identifier.map { " #\($0)" } ?? ""
+                return "\(node.role) \"\(name)\"\(identifier) → \(node.id)"
+            }
+            throw LoupeError.nodeNotFound(
+                "\(needle) — nothing matches that exactly. \(candidates.count) element(s) contain "
+                    + "it:\n    " + listed.joined(separator: "\n    ")
+                    + (candidates.count > 6 ? "\n    …" : "")
+                    + "\n  Name one exactly, or use its handle.")
         }
         throw LoupeError.nodeNotFound(needle)
     }

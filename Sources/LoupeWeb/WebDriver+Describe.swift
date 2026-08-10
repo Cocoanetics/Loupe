@@ -47,19 +47,29 @@ extension WebDriver {
         let roots = try await describeUnlocked(
             DescribeOptions(maxDepth: 32, interestingOnly: false, filter: nil))
         let all = roots.flatMap { $0.flattened() }
-        let match =
-            all.first { $0.identifier == needle }
-            ?? all.first { $0.label == needle }
-            ?? all.filter { $0.matches(needle) }
-                .first { !$0.actions.isEmpty && $0.enabled }
-            ?? all.filter { $0.matches(needle) }.first { $0.enabled }
-            ?? all.first { $0.matches(needle) }
-        guard let match else {
-            throw LoupeError.nodeNotFound(
-                "\(needle) — no element on \(currentURL) has that handle, id, label or text")
+        if let exact = all.first(where: { $0.identifier == needle })
+            ?? all.first(where: { $0.label == needle }) {
+            return (exact.id, nil)
         }
-        let described = match.label ?? match.identifier.map { "#\($0)" } ?? match.id
-        return (match.id, "resolved \(quoted(needle)) to \(match.role) \(quoted(described))")
+        // No exact hit: name the near misses rather than pressing the best of
+        // them. A substring match is a guess, and a guess that clicks reads
+        // exactly like success.
+        let candidates = all.filter { $0.matches(needle) }
+        guard candidates.isEmpty else {
+            let listed = candidates.prefix(6).map { node -> String in
+                let name = node.label ?? node.value ?? node.id
+                let identifier = node.identifier.map { " #\($0)" } ?? ""
+                return "\(node.role) \"\(name)\"\(identifier) → \(node.id)"
+            }
+            throw LoupeError.nodeNotFound(
+                "\(needle) — nothing on \(currentURL) matches that exactly. "
+                    + "\(candidates.count) element(s) contain it:\n    "
+                    + listed.joined(separator: "\n    ")
+                    + (candidates.count > 6 ? "\n    …" : "")
+                    + "\n  Name one exactly, or use its handle.")
+        }
+        throw LoupeError.nodeNotFound(
+            "\(needle) — no element on \(currentURL) has that handle, id, label or text")
     }
 
     private func parseHandle(_ value: String) -> (generation: Int, index: Int)? {

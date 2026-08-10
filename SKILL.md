@@ -174,6 +174,20 @@ has no UI of its own and backgrounds as soon as it drives your app.
 
 ## When something will not resolve
 
+A name that does not match exactly is an error, not a near miss to act on. The
+error lists what *does* contain it, so the next step is usually obvious:
+
+```
+Error: de — nothing matches that exactly. 2 element(s) contain it:
+    window "Chain" → g2n0
+    button "Delete Account" #del → g2n18
+  Name one exactly, or use its handle.
+```
+
+Loupe will not guess, because a guess that presses something reads exactly like
+success — `press "de"` activating Delete Account is worse than any error. If the
+listing does not make the right target obvious, fall back to looking:
+
 In order, and each is quick:
 
 1. `loupe describe` — is the element there at all, under a different name?

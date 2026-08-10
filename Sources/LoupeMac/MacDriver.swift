@@ -50,6 +50,7 @@ public final class MacDriver: UIDriver {
     /// Whether the Chromium wake-up has already been tried for this driver, so a
     /// genuinely empty window costs the extra wait only once.
     var hasWokenChromium = false
+
     var windowElement: AXUIElement?
     let windowTitle: String?
     var resolvedWindowIndex = 0
