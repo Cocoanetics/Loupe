@@ -120,7 +120,15 @@ struct ScriptCommand: AsyncParsableCommand {
                 if outcome.issues.isEmpty {
                     report += "\(message)\n"
                 } else {
-                    for issue in outcome.issues { report += "  ✗ \(issue)\n" }
+                    for issue in outcome.issues {
+                        // An issue may be a whole rendered source listing, so the
+                        // bullet marks its first line and the rest indents under it.
+                        let lines = issue.split(separator: "\n", omittingEmptySubsequences: false)
+                        report += "  ✗ \(lines.first ?? "")\n"
+                        for line in lines.dropFirst() where !line.isEmpty {
+                            report += "    \(line)\n"
+                        }
+                    }
                 }
                 FileHandle.standardError.write(Data(report.utf8))
                 throw ExitCode.failure

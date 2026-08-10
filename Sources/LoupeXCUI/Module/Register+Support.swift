@@ -112,7 +112,8 @@ extension XCUIModule {
                 guard actual != expected else { return .void }
                 let comment = args.count > 1 ? try Boxing.string(args[1], name) : nil
                 await session.record(
-                    issue: comment ?? "\(name) failed: expected \(expected)")
+                    issue: comment ?? "\(name) failed: expected \(expected)",
+                    at: interpreter.currentCallOffset)
                 return .void
             }
         }
@@ -132,7 +133,8 @@ extension XCUIModule {
             await session.record(
                 issue: comment
                     ?? "XCTAssertEqual failed: \(Boxing.describe(args[0])) "
-                        + "!= \(Boxing.describe(args[1]))")
+                        + "!= \(Boxing.describe(args[1]))",
+                at: interpreter.currentCallOffset)
             return .void
         }
 
@@ -143,7 +145,8 @@ extension XCUIModule {
             guard Boxing.lifted(args[0]) == Boxing.lifted(args[1]) else { return .void }
             let comment = args.count > 2 ? try Boxing.string(args[2], "XCTAssertNotEqual") : nil
             await session.record(
-                issue: comment ?? "XCTAssertNotEqual failed: both are \(Boxing.describe(args[0]))")
+                issue: comment ?? "XCTAssertNotEqual failed: both are \(Boxing.describe(args[0]))",
+                at: interpreter.currentCallOffset)
             return .void
         }
 
@@ -157,21 +160,22 @@ extension XCUIModule {
         interpreter.registerGlobal(name: "XCTAssertNil") { args in
             if case .optional(let inner) = args.first ?? .void, inner == nil { return .void }
             let comment = args.count > 1 ? try Boxing.string(args[1], "XCTAssertNil") : nil
-            await session.record(issue: comment ?? "XCTAssertNil failed")
+            await session.record(issue: comment ?? "XCTAssertNil failed", at: interpreter.currentCallOffset)
             return .void
         }
 
         interpreter.registerGlobal(name: "XCTAssertNotNil") { args in
             if case .optional(let inner) = args.first ?? .void, inner == nil {
                 let comment = args.count > 1 ? try Boxing.string(args[1], "XCTAssertNotNil") : nil
-                await session.record(issue: comment ?? "XCTAssertNotNil failed")
+                await session.record(
+                    issue: comment ?? "XCTAssertNotNil failed", at: interpreter.currentCallOffset)
             }
             return .void
         }
 
         interpreter.registerGlobal(name: "XCTFail") { args in
             let message = args.isEmpty ? "XCTFail" : try Boxing.string(args[0], "XCTFail")
-            await session.record(issue: message)
+            await session.record(issue: message, at: interpreter.currentCallOffset)
             return .void
         }
 
@@ -184,14 +188,14 @@ extension XCUIModule {
                 guard let inner else {
                     let comment = args.count > 1 ? try Boxing.string(args[1], "XCTUnwrap") : nil
                     let message = comment ?? "XCTUnwrap failed: value was nil"
-                    await session.record(issue: message)
+                    await session.record(issue: message, at: interpreter.currentCallOffset)
                     throw RuntimeError.invalid(message)
                 }
                 return inner
             }
             if case .void = value {
                 let message = "XCTUnwrap failed: value was nil"
-                await session.record(issue: message)
+                await session.record(issue: message, at: interpreter.currentCallOffset)
                 throw RuntimeError.invalid(message)
             }
             return value
@@ -221,6 +225,11 @@ extension XCUIModule {
 
 /// Ends the script without marking it failed — the `XCTSkip` of a runner that
 /// has no test report to skip within.
-struct ScriptSkipped: Error {
+///
+/// `ScriptUncatchableError` is the interpreter's word for "this is a signal to
+/// the host, not a diagnostic for the script": it reaches the runner as itself
+/// rather than boxed, and a script cannot `try?` it away. Which is what a skip
+/// wants to be — control flow, not a failure.
+struct ScriptSkipped: ScriptUncatchableError {
     let reason: String
 }

@@ -18,8 +18,16 @@ public actor XCUISession {
     private let options: Loupe.Options
     /// Screenshots the script asked to keep, in order taken.
     private(set) var attachments: [(name: String, png: Data)] = []
-    /// Failures recorded so far. See ``record(issue:)``.
-    private(set) var issues: [String] = []
+    /// A failure and where in the script it was recorded.
+    struct Issue: Sendable {
+        var message: String
+        /// Source offset of the call that recorded it, when the interpreter
+        /// could supply one.
+        var offset: Int?
+    }
+
+    /// Failures recorded so far. See ``record(issue:at:)``.
+    private(set) var issues: [Issue] = []
 
     public init(options: Loupe.Options = .default) {
         self.options = options
@@ -35,8 +43,8 @@ public actor XCUISession {
     /// first and telling you nothing about the rest.
     ///
     /// A run that completes having recorded issues is still a failed run.
-    func record(issue: String) {
-        issues.append(issue)
+    func record(issue: String, at offset: Int? = nil) {
+        issues.append(Issue(message: issue, offset: offset))
     }
 
     /// The driver for a target, opened on first use.

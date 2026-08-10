@@ -91,7 +91,15 @@ public struct ScriptRunner: Sendable {
 
         // An expectation that failed does not stop the run, so a script can end
         // normally and still have failed. The verdict is only complete here.
-        let issues = await session.issues
+        // Rendered here rather than where they were recorded: only the
+        // interpreter can turn an offset into a source listing, and it is the
+        // same renderer that reports a thrown error, so a failed expectation and
+        // a failed tap read alike.
+        let recorded = await session.issues
+        let issues = recorded.map { issue -> String in
+            guard let offset = issue.offset else { return issue.message }
+            return interpreter.renderSourceContext(at: offset, message: issue.message)
+        }
         if case .passed = result, !issues.isEmpty {
             result = .failed(
                 message: issues.count == 1

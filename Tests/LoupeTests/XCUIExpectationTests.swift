@@ -20,7 +20,17 @@ struct ExpectationTests {
             XCTAssertEqual(1, 2, "second")
             XCTFail("third")
             """)
-        #expect(outcome.issues == ["first", "second", "third"])
+        // Each issue names the line that recorded it, not just what went wrong:
+        // three failures in one run are only useful if you can tell them apart.
+        #expect(outcome.issues.count == 3)
+        for (issue, expected) in zip(
+            outcome.issues, ["test:2:1: first", "test:3:1: second", "test:4:1: third"])
+        {
+            let (location, message) = (
+                expected.prefix { $0 != " " }, expected.drop { $0 != " " }.dropFirst())
+            #expect(issue.hasPrefix("\(location) error: \(message)"))
+            #expect(issue.contains("`- error: \(message)"))
+        }
         guard case .failed = outcome.result else {
             Issue.record("a run that recorded issues must fail")
             return
@@ -57,7 +67,9 @@ struct ExpectationTests {
             let value = try XCTUnwrap(missing, "needed a value")
             XCTFail("must not be reached: \\(value)")
             """)
-        #expect(outcome.issues == ["needed a value"])
+        #expect(outcome.issues.count == 1)
+        // Column 17 is the `try XCTUnwrap(...)` call, not the start of the line.
+        #expect(outcome.issues.first?.hasPrefix("test:3:17: error: needed a value") == true)
     }
 
     @Test("XCTUnwrap passes the value through when there is one")

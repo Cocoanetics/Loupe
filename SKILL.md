@@ -109,9 +109,15 @@ it found rather than dying at the first:
 
 ```
 check.swift FAILED after 2.3s
-  ✗ dashboard did not appear
-  ✗ XCTAssertEqual failed: Optional(String("2")) != String("7")
+  ✗ check.swift:7:1: error: dashboard did not appear
+     6 | app.buttons["task-1"].tap()
+     7 | XCTAssertTrue(dashboard.waitForExistence(timeout: 20), "dashboard did not appear")
+       | `- error: dashboard did not appear
+     8 | XCTAssertEqual(rows, 7)
 ```
+
+Every failure names the line that recorded it, so you can go straight there
+instead of guessing which of five assertions was the one that fired.
 
 ## Things that will bite you
 
