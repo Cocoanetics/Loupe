@@ -179,6 +179,28 @@ extension MacDriver {
         return nil
     }
 
+    /// Longest to wait for a field to reflect a write. Short, because this is
+    /// only ever a UI framework committing state, not real work.
+    private static let valueSettleTimeout: TimeInterval = 1.5
+
+    /// The field's value once it has stopped being the old one.
+    ///
+    /// Returns as soon as it sees the value that was asked for, so the common
+    /// case costs one extra read; otherwise as soon as it sees *any* change, so a
+    /// reformatting field is not mistaken for a rejecting one; and gives up at
+    /// the timeout, which is what a genuinely rejected write looks like.
+    private func settledValue(
+        of element: AXUIElement, changedFrom before: String, wanted: String
+    ) async throws -> String {
+        let deadline = Date().addingTimeInterval(Self.valueSettleTimeout)
+        var latest = AXAPI.scalarDescription(element, kAXValueAttribute) ?? ""
+        while latest != wanted, latest == before, Date() < deadline {
+            try await Task.sleep(for: .milliseconds(50))
+            latest = AXAPI.scalarDescription(element, kAXValueAttribute) ?? ""
+        }
+        return latest
+    }
+
     // MARK: - Set value
 
     private func setValue(_ needle: String, to value: String) async throws -> ActionResult {
@@ -190,6 +212,10 @@ extension MacDriver {
                 "\(name) does not allow its AXValue to be set. Try press for a control, or focus the "
                     + "element and use type for a field that only accepts keystrokes.")
         }
+        // What it read before, so the check can look for a *change* rather than
+        // for an exact match.
+        let before = AXAPI.scalarDescription(element, kAXValueAttribute) ?? ""
+
         let error = AXAPI.set(element, kAXValueAttribute, value as CFTypeRef)
         guard error == .success else {
             throw LoupeError.failed("setting AXValue on \(name) failed: \(AXAPI.describe(error))")
@@ -197,20 +223,30 @@ extension MacDriver {
 
         // Read back: SetValue is the one action that can be verified for free, and
         // a silently rejected write is exactly the lie this package exists to
-        // catch.
-        let readBack = AXAPI.scalarDescription(element, kAXValueAttribute) ?? ""
-        guard readBack == value else {
+        // catch. Two things make the naive form of that check lie in the other
+        // direction, and both were caught driving a real Electron app.
+        //
+        // It has to be polled. A React or SwiftUI field commits its state a beat
+        // after the write, so an immediate read still returns the old text —
+        // reporting failure for a write that had plainly landed.
+        //
+        // And it has to test for movement, not equality. Plenty of fields
+        // legitimately store something other than what was written: trimmed
+        // whitespace, a reformatted number, a masked secret, an abbreviated path.
+        // What indicates a rejected write is the value not moving at all.
+        let readBack = try await settledValue(of: element, changedFrom: before, wanted: value)
+        guard readBack != before || value == before else {
             throw LoupeError.failed(
-                "AXValue on \(name) was accepted but the element now reads "
-                    + "'\(Self.truncate(readBack))' instead of '\(Self.truncate(value))' — the app "
-                    + "reformatted or rejected the value. Capture the window to see what it shows.")
+                "AXValue on \(name) was accepted but the element still reads "
+                    + "'\(Self.truncate(before))' — the app rejected the value. This is what a "
+                    + "secure text field does: macOS will not let accessibility set one, so type "
+                    + "into it instead. Capture the window to see what it shows.")
         }
         return ActionResult(
-            // Read-back is a real check, not a formality: it is what catches a secure
-            // text field, which accepts the write and then still reads back empty.
-            // Measured on a SwiftUI login form, a successful setValue does reach the
-            // @State binding — dependent controls re-validated and enabled.
-            message: "set value of \(name) to '\(Self.truncate(value))' (verified by read-back)",
+            message: readBack == value
+                ? "set value of \(name) to '\(Self.truncate(value))' (verified by read-back)"
+                : "set value of \(name); it now reads '\(Self.truncate(readBack))' — the app "
+                    + "reformatted what was written",
             payload: id)
     }
 

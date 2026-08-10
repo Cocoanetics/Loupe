@@ -195,6 +195,11 @@ UI automation is. Tracked upstream in SwiftScript#7.
 
 ## Known gaps
 
+- **A live session pins the binary it started with.** `session open` spawns a
+  detached server, so rebuilding Loupe does not change what an open session runs.
+  Reopen the session after a rebuild — otherwise a fix appears not to work, which
+  cost two debugging cycles to notice.
+
 - **A real Swift Testing file still cannot be pasted in and run** — `#expect`
   and `#require` are macro expansions the interpreter cannot evaluate, and
   `@Test` / `@Suite` are refused as unknown attributes
