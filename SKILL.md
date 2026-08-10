@@ -50,6 +50,11 @@ group #Tasks
 Anything with a `#` has an accessibility identifier — use that. It survives copy
 changes and translation; a visible label does not.
 
+Read the identifier before trusting it, though. A web-based app often exposes
+framework-generated ones like `#_r_1r_`, which change between renders and are
+worse than the label. A hand-written identifier is the best handle available; a
+generated one is a signal to use the label and assert more carefully.
+
 If `describe` shows an element you cannot address, that is a finding about *your
 app*, not about Loupe. An element with no label and no identifier is invisible to
 VoiceOver too. Fix it in the app.

@@ -111,6 +111,24 @@ extension MacDriver {
         return roots
     }
 
+    /// The element's identifier, from whichever attribute its toolkit uses.
+    ///
+    /// AppKit sets `AXIdentifier`. Chromium does not — it puts the DOM `id` in
+    /// `AXDOMIdentifier` instead, so every Electron app looked to Loupe as though
+    /// it identified nothing at all.
+    ///
+    /// Worth reading even though the values are often unhelpful: React generates
+    /// ids like `_r_1r_` that change between renders, and seeing one is itself
+    /// the useful signal — it says "do not key on this", which is a better answer
+    /// than an empty column that could mean either "no id" or "not looked at".
+    static func identifier(of element: AXUIElement) -> String? {
+        if let native = AXAPI.string(element, kAXIdentifierAttribute), !native.isEmpty {
+            return native
+        }
+        let dom = AXAPI.string(element, "AXDOMIdentifier")
+        return (dom?.isEmpty ?? true) ? nil : dom
+    }
+
     private enum NodeIdentity {
         case root(String)
         case child(parent: String, index: Int)
@@ -226,7 +244,7 @@ extension MacDriver {
         return Attributes(
             label: title ?? describedBy ?? value ?? specificRoleDescription,
             value: value,
-            identifier: AXAPI.string(element, kAXIdentifierAttribute),
+            identifier: Self.identifier(of: element),
             actions: AXAPI.actions(element))
     }
 
