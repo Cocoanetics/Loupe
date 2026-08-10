@@ -123,6 +123,12 @@ if !dashboard.waitForExistence(timeout: 20, orFailure: app.staticTexts["Invalid 
 Racing the screen you want against the error the app shows turns a 20-second
 timeout into a sub-second answer with a real reason.
 
+**Assert the context, not just the controls.** A script that drives the right
+buttons in the wrong project passes happily — it verified *how*, never *where*.
+Check the thing that identifies the context (the folder, the account, the
+document) before acting on it, and prove the check works by running it once
+against the wrong one. A check that has never failed is not yet a check.
+
 **Element counts are device-dependent.** The same list reported 9 rows on iPhone
 and 12 on iPad, because SwiftUI only materializes what fits. Assert on *specific*
 elements, not on `.count`, unless the count is the thing under test.

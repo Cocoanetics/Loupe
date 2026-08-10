@@ -22,6 +22,21 @@ XCTAssertTrue(prompt.waitForExistence(timeout: 15), "the composer never appeared
 print("local button:", app.buttons["Local"].exists)
 print("prompt placeholder:", prompt.value)
 
+// Check what this conversation is scoped to, before typing anything into it.
+//
+// Without this the script passes against whichever folder happened to be
+// selected — it drives the UI correctly and verifies nothing about *where*. A
+// check that cannot fail is worse than no check, because it reads as one.
+//
+// Asserted by label because this app exposes no accessibility identifiers for
+// its web content; the only identified elements are AppKit menu items, whose
+// identifiers are Objective-C selectors.
+let folder = "MissionControl"
+XCTAssertTrue(
+    app.buttons[folder].exists,
+    "expected this conversation to be scoped to \(folder) — check the folder pop-up")
+print("folder scope confirmed:", folder)
+
 prompt.setText("Driven from an XCUITest-shaped script, on an Electron app.")
 
 // Send becomes usable once there is something to send. Deliberately not tapped:
