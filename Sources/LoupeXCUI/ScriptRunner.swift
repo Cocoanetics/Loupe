@@ -86,7 +86,7 @@ public struct ScriptRunner: Sendable {
         } catch let skip as ScriptSkipped {
             result = .skipped(reason: skip.reason)
         } catch {
-            result = .failed(message: Secrets.redact(describe(error)))
+            result = .failed(message: Secrets.redact(describe(error, using: interpreter)))
         }
 
         // An expectation that failed does not stop the run, so a script can end
@@ -130,8 +130,13 @@ public struct ScriptRunner: Sendable {
     /// Interpreter errors carry the line number; Loupe's carry the remedy.
     /// Both matter, and `localizedDescription` on the raw error loses one or
     /// the other depending on which it is.
-    private func describe(_ error: any Error) -> String {
+    ///
+    /// The interpreter already renders `swiftc`-style source context with a
+    /// caret, so anything it raises is handed back to it to describe rather than
+    /// re-formatted here — that is how a script failure names the line it failed
+    /// on instead of only what went wrong.
+    private func describe(_ error: any Error, using interpreter: Interpreter) -> String {
         if let loupe = error as? LoupeError { return loupe.errorDescription ?? "\(loupe)" }
-        return "\(error)"
+        return interpreter.renderRuntimeError(error)
     }
 }
