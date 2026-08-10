@@ -150,6 +150,12 @@ a bug in the app, not a mistargeted command.
 `{{APP_PASSWORD}}` in a CLI argument. Never put a real credential in a file you
 are about to commit, and never type one into an app you do not own.
 
+**Electron apps look empty until asked.** Chromium keeps its accessibility tree
+switched off until an assistive client requests it, so Claude, VS Code, Discord
+and friends first report as anonymous nested groups. Loupe turns it on and waits;
+if a describe still comes back contentless, run it once more before concluding
+the app has no accessibility.
+
 **A simulator's first run pays a build.** Loupe builds and installs a small UI-test
 runner the first time it drives a device (~40 s, then cached). Later runs start in
 a few seconds. A black window appearing briefly on the device is that runner; it

@@ -40,6 +40,32 @@ extension MacDriver {
                 """)
         }
         try ensureResolved()
+
+        // A Chromium shell builds its accessibility tree only after something
+        // asks, and asking is asynchronous — the switch is thrown in prepare(),
+        // but the first read can still land before the tree exists. Rather than
+        // report an app with no interface, wait briefly and look again.
+        var roots = walkTree(options)
+        if !hasContent(roots), !hasWokenChromium {
+            hasWokenChromium = true
+            enableManualAccessibility()
+            try await Task.sleep(for: .milliseconds(1200))
+            roots = walkTree(options)
+        }
+        return roots
+    }
+
+    /// Whether a tree contains anything a caller could address, as opposed to
+    /// window chrome and anonymous layout containers.
+    private func hasContent(_ roots: [UINode]) -> Bool {
+        roots.flatMap { $0.flattened() }.contains { node in
+            guard node.role != "window" else { return false }
+            if !node.actions.isEmpty { return true }
+            return !(node.label?.isEmpty ?? true) || !(node.identifier?.isEmpty ?? true)
+        }
+    }
+
+    private func walkTree(_ options: DescribeOptions) -> [UINode] {
         nodeIndex.removeAll()
 
         var state = WalkState(budget: Self.nodeBudget, visited: [])

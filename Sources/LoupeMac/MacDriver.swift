@@ -46,6 +46,10 @@ public final class MacDriver: UIDriver {
 
     var runningApplication: NSRunningApplication?
     var applicationElement: AXUIElement?
+
+    /// Whether the Chromium wake-up has already been tried for this driver, so a
+    /// genuinely empty window costs the extra wait only once.
+    var hasWokenChromium = false
     var windowElement: AXUIElement?
     let windowTitle: String?
     var resolvedWindowIndex = 0
@@ -88,11 +92,28 @@ public final class MacDriver: UIDriver {
         try ensureTrusted()
         do {
             try resolveApplication()
+            enableManualAccessibility()
             try resolveWindow()
             resolutionFailure = nil
         } catch {
             resolutionFailure = error
         }
+    }
+
+    /// Ask a Chromium-based app to build its accessibility tree.
+    ///
+    /// Electron and every other Chromium shell keep their tree switched off
+    /// until an assistive client asks for it, because building it is expensive.
+    /// Until then the whole interface reports as anonymous nested groups — every
+    /// button, field and label simply absent — which reads as "this app has poor
+    /// accessibility" when in fact nothing has been turned on yet.
+    ///
+    /// `AXManualAccessibility` is the documented switch. Apps that do not
+    /// implement it return an error, which is why the result is discarded: this
+    /// is a request, not a requirement.
+    func enableManualAccessibility() {
+        guard let applicationElement else { return }
+        AXAPI.set(applicationElement, "AXManualAccessibility", kCFBooleanTrue)
     }
 
     /// Why the target could not be resolved, if it could not.
