@@ -7,6 +7,7 @@ fastest way to find out whether Loupe itself is pleasant to use.
 | | |
 | --- | --- |
 | [TaskDemo](TaskDemo) | A universal SwiftUI app: filterable list, detail, add-via-sheet. Uses `NavigationSplitView`, so iPhone gets a push stack and iPad gets two columns — the same flow has to cope with both. |
+| [electron-app.swift](electron-app.swift) | Driving an Electron app on macOS. Chromium keeps its accessibility tree off until asked, so this is the case that looks like "the app has no accessibility" until Loupe wakes it. |
 | [login.swift](login.swift) | A login flow with a retry, showing how to race the screen you want against the app's own error message. |
 
 ## Running the checks
