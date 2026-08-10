@@ -42,18 +42,34 @@ extension MacDriver {
         try ensureResolved()
 
         // A Chromium shell builds its accessibility tree only after something
-        // asks, and asking is asynchronous — the switch is thrown in prepare(),
-        // but the first read can still land before the tree exists. Rather than
-        // report an app with no interface, wait briefly and look again.
+        // asks. The switch is thrown when the app is resolved, but building is
+        // asynchronous, so the first read can still land before the tree exists.
+        //
+        // Polled rather than slept on a fixed delay: a fixed wait is wrong in
+        // both directions — too long for the common case, and too short for a
+        // large app, where it would hand back an empty tree and leave the caller
+        // concluding the app has no accessibility at all. That is the whole
+        // failure this exists to prevent, so it must not be reintroduced by an
+        // arbitrary constant.
         var roots = walkTree(options)
         if !hasContent(roots), !hasWokenChromium {
             hasWokenChromium = true
+            // Already set when the app was resolved; set again in case the app
+            // was replaced or relaunched since.
             enableManualAccessibility()
-            try await Task.sleep(for: .milliseconds(1200))
-            roots = walkTree(options)
+            let deadline = Date().addingTimeInterval(Self.chromiumWakeTimeout)
+            while !hasContent(roots), Date() < deadline {
+                try await Task.sleep(for: .milliseconds(150))
+                roots = walkTree(options)
+            }
         }
         return roots
     }
+
+    /// Longest to wait for a Chromium tree to appear. Generous because the cost
+    /// is only paid by an app that genuinely has nothing addressable yet, and
+    /// the alternative — giving up early — is the misleading answer.
+    static let chromiumWakeTimeout: TimeInterval = 5
 
     /// Whether a tree contains anything a caller could address, as opposed to
     /// window chrome and anonymous layout containers.
