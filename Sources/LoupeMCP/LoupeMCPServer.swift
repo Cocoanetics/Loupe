@@ -100,6 +100,8 @@ public actor LoupeMCPServer {
     /// - Parameter target: What to inspect.
     /// - Parameter depth: Maximum tree depth, default 24.
     /// - Parameter filter: Only return elements whose label, value or id contains this.
+    ///   Filters the output, not the walk — on a big window `depth` is what makes
+    ///   this fast, and a filtered full-depth read is the slowest way to ask.
     /// - Parameter includeAll: Include layout-only nodes too. Default false, which keeps the tree small.
     /// - Parameter viewport: Web viewport as `WxH`.
     /// - Parameter profile: Named persistent web profile.
@@ -145,7 +147,15 @@ public actor LoupeMCPServer {
     /// - Parameter setValue: `<element>=<text>`, sets a value directly (full Unicode, no keystrokes). For a
     ///   secret, pass `<element>={{ENV_VAR_NAME}}` — the value is read from the environment on this machine, so
     ///   it never enters your context.
-    /// - Parameter click: `x,y` in target points, when there is no element to name.
+    /// - Parameter click: `x,y` in window points, when there is no element to name.
+    ///   Prefix to change space: `screen:1500,900`, `px:240,680`, `n:0.35,0.62`.
+    /// - Parameter cursorClick: Same coordinates, but a **real** mouse click.
+    ///   AppKit discards a synthetic click sent to a background app before
+    ///   `mouseDown:` runs, and plenty of controls either expose no AX action or
+    ///   advertise one they do not implement — so when `press` does nothing and
+    ///   nothing else explains it, this is the answer. It briefly activates the
+    ///   app and moves the pointer, then puts both back, which makes it the one
+    ///   action here the user can see happen.
     /// - Parameter type: Text to type into whatever has focus.
     /// - Parameter key: A key such as `return`, `tab`, `escape`, `down`, or `cmd+s`.
     /// - Parameter scroll: `dx,dy`.
@@ -157,6 +167,7 @@ public actor LoupeMCPServer {
         press: String? = nil,
         setValue: String? = nil,
         click: String? = nil,
+        cursorClick: String? = nil,
         type: String? = nil,
         key: String? = nil,
         scroll: String? = nil,
@@ -166,11 +177,13 @@ public actor LoupeMCPServer {
         profile: String? = nil
     ) async throws -> MCPImage {
         let pending = try ActionRequest(
-            press: press, setValue: setValue, click: click, type: type, key: key, scroll: scroll,
+            press: press, setValue: setValue, click: click, cursorClick: cursorClick,
+            type: type, key: key, scroll: scroll,
             open: open, launch: launch).actions()
         guard !pending.isEmpty else {
             throw LoupeError.failed(
-                "no action given — supply at least one of press/setValue/click/type/key/scroll/open/launch")
+                "no action given — supply at least one of "
+                    + "press/setValue/click/cursorClick/type/key/scroll/open/launch")
         }
         let (_, shot) = try await Loupe.act(
             try Target.parse(target),

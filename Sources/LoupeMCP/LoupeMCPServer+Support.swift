@@ -138,6 +138,7 @@ struct ActionRequest {
     var press: String?
     var setValue: String?
     var click: String?
+    var cursorClick: String?
     var type: String?
     var key: String?
     var scroll: String?
@@ -187,9 +188,11 @@ struct ActionRequest {
     /// has focus.
     private func inputActions() throws -> [UIAction] {
         var out: [UIAction] = []
-        if let point = Self.pair(click) {
-            out.append(.click(x: point.first, y: point.second, space: .windowPoints, viaCursor: false))
-        }
+        // Both go through the CLI's own step parser rather than a second
+        // number-splitter here, so `px:`/`n:`/`screen:` prefixes work identically
+        // on both surfaces and cannot drift apart.
+        if let click { out.append(try UIAction.parse(step: "click:\(click)")) }
+        if let cursorClick { out.append(try UIAction.parse(step: "cursorclick:\(cursorClick)")) }
         if let type { out.append(.type(try EnvironmentInterpolation.expand(type))) }
         if let key { out.append(.key(key)) }
         if let delta = Self.pair(scroll) {

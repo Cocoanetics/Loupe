@@ -74,8 +74,11 @@ extension MacDriver {
                 String(
                     format:
                         "point (%.0f, %.0f) is outside the target window, whose screen frame is "
-                        + "x=%.0f y=%.0f w=%.0f h=%.0f — click coordinates are global screen points "
-                        + "with a top-left origin, the same space as UINode.frame",
+                        + "x=%.0f y=%.0f w=%.0f h=%.0f. Coordinates default to WINDOW points — "
+                        + "measured from the window's top-left, not the screen's — so a frame read "
+                        + "from `describe` needs the window origin subtracted, or pass it unchanged "
+                        + "as `screen:x,y`. The point shown above is the screen point yours "
+                        + "resolved to.",
                     x, y, frame.x, frame.y, frame.width, frame.height))
         }
     }

@@ -89,8 +89,18 @@ enum WindowCapture {
             // onScreenWindowsOnly: false is mandatory. With `true`, minimized and
             // hidden windows are not even enumerated, so a background-first tool
             // would report "no such window" for its most common case.
-            content = try await SCShareableContent.excludingDesktopWindows(
-                false, onScreenWindowsOnly: false)
+            // Bounded: ScreenCaptureKit accepts this request and never calls
+            // back when the process has its own TCC entry but no way to complete
+            // the consent flow — a CLI cannot, having no UI to host it. It used
+            // to hang forever with no output at all.
+            content = try await Deadline.run(
+                seconds: 15, "ScreenCaptureKit's window list",
+                {
+                    Unchecked(
+                        try await SCShareableContent.excludingDesktopWindows(
+                            false, onScreenWindowsOnly: false))
+                }
+            ).value
         } catch {
             throw LoupeError.permissionDenied(
                 "ScreenCaptureKit could not enumerate windows: \(error.localizedDescription)",

@@ -23,6 +23,18 @@ extension MacDriver {
     /// them, since validation keys off a key window that a background app does
     /// not have.
     public func describe(_ options: DescribeOptions) async throws -> [UINode] {
+        // Bounded: the walk is synchronous accessibility traffic, one IPC round
+        // trip per attribute per node, and a window holding a few hundred
+        // realized table rows takes long enough to look like a hang. `depth` does
+        // bound it — measured 0.3s at depth 1 against >30s unbounded on a window
+        // with a few hundred rows — but `filter` does not: it walks everything
+        // and then discards, so filtering is the slow way to ask a small question.
+        try await Deadline.run(seconds: 30, "reading this window's element tree") { [self] in
+            Unchecked(try await describeNow(options))
+        }.value
+    }
+
+    private func describeNow(_ options: DescribeOptions) async throws -> [UINode] {
         try requireResolved()
         // A locked screen strips window *contents* from the accessibility tree while
         // leaving the application element and its menu bar, so the result looks like
