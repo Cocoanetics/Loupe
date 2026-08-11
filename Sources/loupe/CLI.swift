@@ -55,6 +55,32 @@ struct LoupeCommand: AsyncParsableCommand {
             List.self, AtCommand.self, Use.self, Session.self, Window.self, Sim.self, Doctor.self, MCPCommand.self
         ],
         defaultSubcommand: Capture.self)
+
+    /// Whether this invocation carried no arguments at all. Options or a target
+    /// still mean "capture" — the default subcommand is what makes `loupe
+    /// https://example.com` work — but nothing at all is a question, not a command.
+    static func isBareInvocation(_ arguments: [String]) -> Bool { arguments.count <= 1 }
+
+    /// `main` is written out rather than inherited so a bare `loupe` can answer with
+    /// the help text. Dispatching it to `capture` instead sent it at whatever `loupe
+    /// use` last remembered, which fails with an error naming a target the user never
+    /// typed — and, once that target's session has exited, an error about a session
+    /// they never asked for either.
+    static func main() async {
+        if isBareInvocation(CommandLine.arguments) {
+            exit(withError: CleanExit.helpRequest())
+        }
+        do {
+            var command = try parseAsRoot()
+            if var asyncCommand = command as? AsyncParsableCommand {
+                try await asyncCommand.run()
+            } else {
+                try command.run()
+            }
+        } catch {
+            exit(withError: error)
+        }
+    }
 }
 
 // MARK: - Shared option groups
