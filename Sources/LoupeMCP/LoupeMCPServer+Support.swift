@@ -243,3 +243,22 @@ extension LoupeMCPServer {
         path.map { URL(fileURLWithPath: ($0 as NSString).expandingTildeInPath) }
     }
 }
+
+/// A comparison's numbers plus the file holding its side-by-side image.
+///
+/// Flattened rather than nested so `changedPercent` and `compositePath` sit at
+/// the same level: the caller reading this wants to decide "did enough change to
+/// be worth posting" and "what do I attach", and those are one thought.
+struct ComparisonReport: Encodable, Sendable {
+    let report: DiffReport
+    /// Where the side-by-side proof image was written, ready to attach.
+    let compositePath: String
+
+    enum CodingKeys: String, CodingKey { case compositePath }
+
+    func encode(to encoder: Encoder) throws {
+        try report.encode(to: encoder)
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(compositePath, forKey: .compositePath)
+    }
+}

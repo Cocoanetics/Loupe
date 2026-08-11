@@ -23,9 +23,13 @@ public actor LoupeMCPServer {
     /// Longest edge, in pixels, of images handed back to the model.
     private let maxEdge: Int
 
-    /// Most recent diff per session, so the numbers can be fetched without
-    /// re-rendering the comparison.
-    private var lastReports: [String: DiffReport] = [:]
+    /// The last comparison per session, with the file it was written to.
+    ///
+    /// The path matters as much as the numbers: `loupe_after` hands the agent an
+    /// inline image it can look at, but attaching that proof to an issue takes a
+    /// file, and until this carried the path there was no way to learn it on the
+    /// success path — only in the error text when the two captures matched.
+    private var lastReports: [String: (report: DiffReport, path: URL)] = [:]
 
     public init(maxEdge: Int = 1400) {
         self.maxEdge = maxEdge
@@ -283,8 +287,13 @@ public actor LoupeMCPServer {
     }
 
     /// Record the "after" state and return the side-by-side proof image, with the
-    /// regions that changed boxed in red. Attach this to the issue or merge
-    /// request as evidence the fix works.
+    /// regions that changed boxed in red.
+    ///
+    /// The image comes back inline so you can check the proof yourself. To post
+    /// it, you need the file: call `loupe_diff_report` for `compositePath`, then
+    /// attach that path to the issue or merge request with whatever attach-image
+    /// tool your forge offers. Posting the proof is the point — a reviewer should
+    /// not have to take "it looks right now" on trust.
     ///
     /// Throws if the two captures are identical: that almost always means the fix
     /// is not in the running build (stale process, forgotten rebuild) rather than
@@ -317,20 +326,21 @@ public actor LoupeMCPServer {
                     + "certainly not in what you just captured — rebuild and relaunch the app, or check "
                     + "you reached the same screen. The image pair is at \(outcome.path.path) if you want to look.")
         }
-        self.lastReports[session] = outcome.report
+        self.lastReports[session] = (outcome.report, outcome.path)
         return try image(outcome.composite)
     }
 
-    /// The numbers behind a comparison: how much changed, the largest per-channel
+    /// The numbers behind a comparison, plus `compositePath` — the file holding
+    /// the side-by-side image, which is what you attach: how much changed, the largest per-channel
     /// difference, and the bounding boxes of the changed regions in target points.
     /// - Parameter session: The comparison to report on.
     @MCPTool(readOnlyHint: true)
     public func loupe_diff_report(session: String) async throws -> String {
-        guard let report = lastReports[session] else {
+        guard let last = lastReports[session] else {
             throw LoupeError.failed(
                 "no diff recorded for session '\(session)' in this process — run loupe_after first")
         }
-        return try Self.encode(report)
+        return try Self.encode(ComparisonReport(report: last.report, compositePath: last.path.path))
     }
 
     /// Compare two PNG files that already exist and return the side-by-side image.
