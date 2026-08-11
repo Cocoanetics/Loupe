@@ -137,8 +137,8 @@ enum Boxing {
     static func describe(_ value: Value) -> String {
         switch value {
             case .string(let text): return "String(\"\(text)\")"
-            case .int(let n): return "Int(\(n))"
-            case .double(let d): return "Double(\(d))"
+            case .int(let number): return "Int(\(number))"
+            case .double(let number): return "Double(\(number))"
             case .bool(let flag): return "Bool(\(flag))"
             case .void: return "Void"
             case .array: return "Array"

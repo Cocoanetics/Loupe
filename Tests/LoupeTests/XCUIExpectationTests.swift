@@ -23,9 +23,8 @@ struct ExpectationTests {
         // Each issue names the line that recorded it, not just what went wrong:
         // three failures in one run are only useful if you can tell them apart.
         #expect(outcome.issues.count == 3)
-        for (issue, expected) in zip(
-            outcome.issues, ["test:2:1: first", "test:3:1: second", "test:4:1: third"])
-        {
+        let expectations = ["test:2:1: first", "test:3:1: second", "test:4:1: third"]
+        for (issue, expected) in zip(outcome.issues, expectations) {
             let (location, message) = (
                 expected.prefix { $0 != " " }, expected.drop { $0 != " " }.dropFirst())
             #expect(issue.hasPrefix("\(location) error: \(message)"))

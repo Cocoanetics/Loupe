@@ -181,7 +181,7 @@ public enum LoupeScript {
 
     /// Entry points that only exist once the module has been imported.
     private static let importedNames = [
-        "XCUIApplication", "XCTAssertTrue", "XCTAssertEqual", "XCTFail", "XCTSkip", "XCUIElement",
+        "XCUIApplication", "XCTAssertTrue", "XCTAssertEqual", "XCTFail", "XCTSkip", "XCUIElement"
     ]
 
     /// Say what to do about "cannot find 'XCUIApplication' in scope".

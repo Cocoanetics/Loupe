@@ -5,6 +5,9 @@ import LoupeSim
 import LoupeXCUI
 import SwiftMCP
 
+// See the note on `LoupeMCPServer` below.
+// swiftlint:disable file_length
+
 /// Loupe's verbs as MCP tools, so an agent driven through ACP/acpx gets exactly
 /// what the CLI has.
 ///
@@ -17,6 +20,12 @@ import SwiftMCP
 /// The tools live in this file because `@MCPServer` only discovers `@MCPTool`
 /// members declared in the actor's own body; everything else is in
 /// `LoupeMCPServer+Support.swift`.
+///
+/// Which is also why `file_length` is off for this file: the usual remedy is to
+/// split the type across extensions, and doing that would silently unregister
+/// every tool moved out. What is left here is one small helper and the tools'
+/// own documentation — and that documentation is load-bearing, since a tool an
+/// agent is not told about is a tool it does not use.
 @MCPServer(name: "loupe", version: "0.1.0")
 public actor LoupeMCPServer {
 
