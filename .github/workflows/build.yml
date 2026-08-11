@@ -1,0 +1,57 @@
+---
+# Catches the thing linting cannot: code that does not compile, and behaviour
+# that regressed. Until this existed a broken build shipped green, because the
+# only job was SwiftLint.
+#
+# The whole test suite runs here, which is worth stating because Loupe is a
+# UI-automation tool and that sounds unlikely: no test drives a UI. They cover
+# parsing, script interpretation, report rendering and image maths, and they
+# pass with an empty HOME and no Accessibility or Screen Recording grant —
+# neither of which a hosted runner can be given, since TCC's database is
+# SIP-protected. Anything that does drive a real app needs a self-hosted runner
+# with those permissions already granted.
+name: Build
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/build.yml'
+      - '**/*.swift'
+      - 'Package.resolved'
+  push:
+    branches: [main]
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-test:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Show toolchain
+        run: swift --version
+
+      # Most of a cold build is swift-syntax, pulled in through SwiftScript.
+      #
+      # Keyed strictly on the resolved pins, with no `restore-keys` fallback on
+      # purpose: a partially-matching `.build` is how you get a module cache that
+      # disagrees with the checked-out dependencies, which surfaces as
+      # `missing required module '_SwiftSyntaxCShims'` rather than as anything
+      # resembling its cause. A dependency bump paying for one cold build is the
+      # cheaper mistake.
+      - name: Cache build products
+        uses: actions/cache@v4
+        with:
+          path: .build
+          key: ${{ runner.os }}-spm-${{ hashFiles('Package.resolved') }}
+
+      # `--build-tests` covers the library, the executable and the test targets
+      # in one pass, so a compile error anywhere fails here rather than later.
+      - name: Build
+        run: swift build --build-tests
+
+      - name: Test
+        run: swift test --skip-build
