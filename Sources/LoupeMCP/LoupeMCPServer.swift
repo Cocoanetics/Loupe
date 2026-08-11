@@ -23,13 +23,13 @@ public actor LoupeMCPServer {
     /// Longest edge, in pixels, of images handed back to the model.
     private let maxEdge: Int
 
-    /// The last comparison per session, with the file it was written to.
+    /// The last comparison per session.
     ///
-    /// The path matters as much as the numbers: `loupe_after` hands the agent an
-    /// inline image it can look at, but attaching that proof to an issue takes a
-    /// file, and until this carried the path there was no way to learn it on the
-    /// success path — only in the error text when the two captures matched.
-    private var lastReports: [String: (report: DiffReport, path: URL)] = [:]
+    /// The numbers alone were not enough: `loupe_after` hands back an inline
+    /// image to look at, but posting the proof takes files, and until
+    /// `loupe_diff_report` carried their paths there was no way to learn them on
+    /// the success path — only in the error text when the two captures matched.
+    private var lastReports: [String: DiffReport] = [:]
 
     public init(maxEdge: Int = 1400) {
         self.maxEdge = maxEdge
@@ -290,10 +290,12 @@ public actor LoupeMCPServer {
     /// regions that changed boxed in red.
     ///
     /// The image comes back inline so you can check the proof yourself. To post
-    /// it, you need the file: call `loupe_diff_report` for `compositePath`, then
-    /// attach that path to the issue or merge request with whatever attach-image
-    /// tool your forge offers. Posting the proof is the point — a reviewer should
-    /// not have to take "it looks right now" on trust.
+    /// it, you need files: `loupe_diff_report` gives `beforePath` and `afterPath`,
+    /// the two plain screenshots. Attach those two — a reader wants to see what it
+    /// looked like and what it looks like now, and the side-by-side composite at
+    /// `compositePath` is there if a boxed diff genuinely helps. Posting the proof
+    /// is the point; a reviewer should not have to take "it looks right now" on
+    /// trust.
     ///
     /// Throws if the two captures are identical: that almost always means the fix
     /// is not in the running build (stale process, forgotten rebuild) rather than
@@ -326,21 +328,28 @@ public actor LoupeMCPServer {
                     + "certainly not in what you just captured — rebuild and relaunch the app, or check "
                     + "you reached the same screen. The image pair is at \(outcome.path.path) if you want to look.")
         }
-        self.lastReports[session] = (outcome.report, outcome.path)
+        self.lastReports[session] = outcome.report
         return try image(outcome.composite)
     }
 
-    /// The numbers behind a comparison, plus `compositePath` — the file holding
-    /// the side-by-side image, which is what you attach: how much changed, the largest per-channel
+    /// The numbers behind a comparison, plus the files: `beforePath` and
+    /// `afterPath` are the two plain screenshots to attach, and `compositePath` is
+    /// the side-by-side with changed regions boxed. How much changed, the largest per-channel
     /// difference, and the bounding boxes of the changed regions in target points.
     /// - Parameter session: The comparison to report on.
     @MCPTool(readOnlyHint: true)
     public func loupe_diff_report(session: String) async throws -> String {
-        guard let last = lastReports[session] else {
+        guard let report = lastReports[session] else {
             throw LoupeError.failed(
                 "no diff recorded for session '\(session)' in this process — run loupe_after first")
         }
-        return try Self.encode(ComparisonReport(report: last.report, compositePath: last.path.path))
+        let store = ComparisonStore()
+        return try Self.encode(
+            ComparisonReport(
+                report: report,
+                beforePath: store.beforeURL(session).path,
+                afterPath: store.afterURL(session).path,
+                compositePath: store.compareURL(session).path))
     }
 
     /// Compare two PNG files that already exist and return the side-by-side image.

@@ -244,21 +244,32 @@ extension LoupeMCPServer {
     }
 }
 
-/// A comparison's numbers plus the file holding its side-by-side image.
+/// A comparison's numbers plus the files it produced.
 ///
-/// Flattened rather than nested so `changedPercent` and `compositePath` sit at
-/// the same level: the caller reading this wants to decide "did enough change to
-/// be worth posting" and "what do I attach", and those are one thought.
+/// Flattened rather than nested so the numbers and the paths sit at the same
+/// level: whoever reads this is deciding "did enough change to be worth posting"
+/// and "what do I attach", and those are one thought.
+///
+/// Both plain captures are here, not just the composite. The composite is the
+/// right thing to *look* at — changed regions boxed — and the wrong thing to
+/// post as the whole story: a reader following an issue wants to see how it was
+/// and how it is, at full size, not a shrunken pair with annotations over them.
 struct ComparisonReport: Encodable, Sendable {
     let report: DiffReport
-    /// Where the side-by-side proof image was written, ready to attach.
+    /// The screenshot taken before the change.
+    let beforePath: String
+    /// The screenshot taken after it.
+    let afterPath: String
+    /// The two side by side, with changed regions boxed.
     let compositePath: String
 
-    enum CodingKeys: String, CodingKey { case compositePath }
+    enum CodingKeys: String, CodingKey { case beforePath, afterPath, compositePath }
 
     func encode(to encoder: Encoder) throws {
         try report.encode(to: encoder)
         var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(beforePath, forKey: .beforePath)
+        try container.encode(afterPath, forKey: .afterPath)
         try container.encode(compositePath, forKey: .compositePath)
     }
 }
