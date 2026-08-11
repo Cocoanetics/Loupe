@@ -118,6 +118,11 @@ public actor LoupeMCPServer {
     /// load per call, so splitting the click and the screenshot across two calls
     /// would throw away the state the click produced.
     ///
+    /// One call is one step, though. If you are about to call this several times
+    /// in a row — the same button repeatedly, or press-then-check-then-press —
+    /// use `loupe_script` instead: it runs the whole sequence in one call and
+    /// returns the values you asked for rather than a screenshot per step.
+    ///
     /// Mac apps are driven through the accessibility API — the user's cursor never
     /// moves and the app is never brought forward. Simulators accept only `launch`
     /// and `open`; tapping needs an XCUITest runner Loupe does not have yet, and
@@ -167,10 +172,15 @@ public actor LoupeMCPServer {
     /// printed plus every expectation that failed, each naming the line it
     /// failed on.
     ///
-    /// Reach for this over a chain of `loupe_act` calls when the flow has more
-    /// than a couple of steps, when it needs to wait for something, or when you
-    /// want to read values back — a script can branch, loop, wait, and print,
-    /// and it runs against one session so state carries across steps.
+    /// **Use this whenever you already know the steps.** It is the default for
+    /// anything past a single action, not a fallback: a flow that would take a
+    /// `loupe_session_open`, five `loupe_act` calls and a `loupe_describe` is one
+    /// call here, and it returns the values you asked for instead of a screenshot
+    /// you have to read. Reach for a session and separate `loupe_act` calls only
+    /// when you truly cannot know the next step until you have seen the last one.
+    ///
+    /// A script can branch, loop, wait and print, and it runs against one session
+    /// so state carries across steps.
     ///
     /// The script is ordinary Swift written against `XCUIApplication`, and it is
     /// the same source a UI test would contain, so a flow proved here pastes
@@ -187,6 +197,12 @@ public actor LoupeMCPServer {
     /// problem rather than dying at the first. Failures come back rendered with
     /// the source line and a caret, so go to the line named in `issues` rather
     /// than re-deriving which step broke.
+    ///
+    /// This is an interpreter, not a compiler, and it has no Foundation: there is
+    /// no `Thread`, no `usleep`, no `DispatchQueue`. To wait for the screen, use
+    /// `waitForExistence(timeout:)` — which polls and returns as soon as the thing
+    /// appears — rather than sleeping through a fixed delay. `sleep(seconds)`
+    /// exists for the rare case that nothing observable marks the wait.
     /// - Parameter source: The script itself. Supply this or `path`.
     /// - Parameter path: A script file on disk to run instead of `source`.
     /// - Parameter target: What a bare `XCUIApplication()` refers to, e.g. `mac:MyApp`.
@@ -340,6 +356,13 @@ public actor LoupeMCPServer {
     /// it, so a login, a scroll position or a half-filled form is gone by the next
     /// call. Open a session whenever you need to look, decide, act and look again
     /// on the web.
+    ///
+    /// **Only when you genuinely have to decide between the steps.** If you
+    /// already know the sequence — press this five times, then read that —
+    /// `loupe_script` runs the whole flow in one call against one session and
+    /// hands back what it printed. A session plus a chain of `loupe_act` calls
+    /// does the same work in as many round trips as there are steps, and returns
+    /// a screenshot every time whether you needed one or not.
     ///
     /// The session exits on its own after 15 idle minutes. Close it when done.
     /// - Parameter target: What to hold open, e.g. a URL.
