@@ -114,6 +114,27 @@ struct ScriptReportTests {
         #expect(report.output == "fine\n")
     }
 
+    /// The bridge binds to the import, so forgetting it produces a scope error
+    /// about a symbol the script obviously used. Accurate; no help at all.
+    @Test("forgetting the import is diagnosed as the missing line it is")
+    func missingImportIsExplained() async {
+        let report = await LoupeScript.run(
+            ScriptRequest(source: "let app = XCUIApplication()\n", fileName: "noimport"))
+        #expect(report.status == .failed)
+        #expect(report.error?.contains("cannot find 'XCUIApplication'") == true)
+        #expect(report.error?.contains("missing its first line") == true)
+    }
+
+    /// Asserting on the hint sentence, not on "import XCUIAutomation": the
+    /// rendered error quotes the script, so the import line appears in the
+    /// message of any script that has one.
+    @Test("a scope error in a script that did import is left alone")
+    func unrelatedScopeErrorsAreNotHijacked() async {
+        let report = await run("let x = totallyUndefinedThing()")
+        #expect(report.status == .failed)
+        #expect(report.error?.contains("missing its first line") == false)
+    }
+
     @Test("the report survives a round trip as JSON, which is what an agent reads")
     func encodesForAgents() async throws {
         let report = await run(#"XCTFail("nope")"#)

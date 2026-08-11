@@ -173,9 +173,34 @@ public enum LoupeScript {
                 report.reason = reason
             case .failed(let message):
                 report.status = .failed
-                report.error = Secrets.redact(message)
+                report.error = Self.hintingAtMissingImport(
+                    Secrets.redact(message), source: request.source)
         }
         return report
+    }
+
+    /// Entry points that only exist once the module has been imported.
+    private static let importedNames = [
+        "XCUIApplication", "XCTAssertTrue", "XCTAssertEqual", "XCTFail", "XCTSkip", "XCUIElement",
+    ]
+
+    /// Say what to do about "cannot find 'XCUIApplication' in scope".
+    ///
+    /// The bridge is bound to the *import*, so a script that forgets the line
+    /// gets a scope error naming a symbol it can plainly see it used — accurate,
+    /// and no help at all. It is a mistake worth catching rather than styling:
+    /// callers composing a script inline drop the import far more readily than
+    /// anyone editing a file, and one added line is the whole fix.
+    private static func hintingAtMissingImport(_ message: String, source: String) -> String {
+        guard message.contains("cannot find '"),
+            importedNames.contains(where: { message.contains("cannot find '\($0)'") }),
+            !source.contains("import XCUIAutomation"),
+            !source.contains("import XCTest"),
+            !source.contains("import Testing")
+        else { return message }
+        return message
+            + "\nThe script is missing its first line: add `import XCUIAutomation`, "
+            + "which is what binds XCUIApplication and the XCTAssert functions."
     }
 
     private static func seconds(_ timeout: TimeInterval?) -> String {
