@@ -131,12 +131,15 @@ enum Boxing {
         return value
     }
 
+    /// Both the type and the value, because a failed comparison needs both:
+    /// `Optional(String("2")) != String("7")` is the case the type alone
+    /// explains, and `Int(2) != Int(7)` is the case only the value does.
     static func describe(_ value: Value) -> String {
         switch value {
             case .string(let text): return "String(\"\(text)\")"
-            case .int: return "Int"
-            case .double: return "Double"
-            case .bool: return "Bool"
+            case .int(let n): return "Int(\(n))"
+            case .double(let d): return "Double(\(d))"
+            case .bool(let flag): return "Bool(\(flag))"
             case .void: return "Void"
             case .array: return "Array"
             case .dict: return "Dictionary"

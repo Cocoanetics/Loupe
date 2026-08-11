@@ -32,6 +32,7 @@ let package = Package(
 			name: "LoupeMCP",
 			dependencies: [
 				"LoupeKit",
+				"LoupeXCUI",
 				.product(name: "SwiftMCP", package: "SwiftMCP"),
 				.product(name: "Logging", package: "swift-log"),
 			]),
@@ -54,6 +55,6 @@ let package = Package(
 				.product(name: "ArgumentParser", package: "swift-argument-parser"),
 			]),
 
-		.testTarget(name: "LoupeTests", dependencies: ["LoupeKit", "LoupeXCUI"]),
+		.testTarget(name: "LoupeTests", dependencies: ["LoupeKit", "LoupeXCUI", "LoupeMCP"]),
 	]
 )

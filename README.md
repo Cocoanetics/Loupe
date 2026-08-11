@@ -443,10 +443,17 @@ loupe mcp    # stdio MCP server
 ```
 
 Tools: `loupe_list_targets`, `loupe_capture`, `loupe_describe`, `loupe_act`,
-`loupe_eval`, `loupe_before`, `loupe_after`, `loupe_diff_report`, `loupe_compare`,
-`loupe_session_open`, `loupe_session_list`, `loupe_session_close`,
+`loupe_script`, `loupe_eval`, `loupe_before`, `loupe_after`, `loupe_diff_report`,
+`loupe_compare`, `loupe_session_open`, `loupe_session_list`, `loupe_session_close`,
 `loupe_sim_status_bar`, `loupe_sim_appearance`, `loupe_doctor`. Images come back inline as content
 blocks (downscaled, since a full 5K capture costs ~2,500 image tokens).
+
+`loupe_script` is the multi-step one: hand it a flow in the XCUITest API and it
+returns JSON with `status`, whatever the script printed, and every failed
+expectation already rendered with the line that failed and a caret under it. It
+is the same code path `loupe script` runs — the CLI is a second front end on it,
+not a second implementation — so a flow proved at the terminal behaves
+identically when an agent runs it.
 
 Wire it into any ACP agent, for example in `~/.acpx/config.json`:
 

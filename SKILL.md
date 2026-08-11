@@ -104,6 +104,13 @@ XCTAssertTrue(app.staticTexts["Done"].waitForExistence(timeout: 10))
 loupe script check.swift --target "sim:iPhone 17 Pro"
 ```
 
+Driving Loupe over MCP instead of a shell? `loupe_script` takes the same flow —
+as `source` inline or a `path` to a file — and hands back JSON with `status`,
+what the script printed, and the failures. Prefer it over a chain of `loupe_act`
+calls once a flow needs to wait, branch, or read a value back: those calls each
+get their own session, so a web page reloads between them and throws away what
+the last one did.
+
 A failed expectation **records and keeps going**, so one run reports every problem
 it found rather than dying at the first:
 
@@ -114,6 +121,7 @@ check.swift FAILED after 2.3s
      7 | XCTAssertTrue(dashboard.waitForExistence(timeout: 20), "dashboard did not appear")
        | `- error: dashboard did not appear
      8 | XCTAssertEqual(rows, 7)
+  ✗ check.swift:8:1: error: XCTAssertEqual failed: Int(9) != Int(7)
 ```
 
 Every failure names the line that recorded it, so you can go straight there

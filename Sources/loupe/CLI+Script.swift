@@ -51,6 +51,9 @@ struct ScriptCommand: AsyncParsableCommand {
     @Option(help: "Directory for screenshots the script attaches.")
     var screenshots: String?
 
+    @Option(help: "Give up after this many seconds. Unlimited by default.")
+    var timeout: Double?
+
     @Flag(help: "List where this surface differs from Apple's XCUITest, and exit.")
     var divergences = false
 
@@ -85,53 +88,30 @@ struct ScriptCommand: AsyncParsableCommand {
         // remembered, so a script slots into a flow already in progress.
         let target = try? CurrentTarget.resolve(targetName)
         let remembered = targetName == nil ? CurrentTarget.load() : nil
-        let runner = ScriptRunner(
+        let request = ScriptRequest(
+            source: source,
+            fileName: name,
+            defaultTarget: target,
             options: Loupe.Options(
                 // An explicit --viewport wins over the remembered one; the
                 // other way round silently ignores what was just asked for.
                 viewport: Viewport.size(from: explicitViewport ?? remembered?.viewport ?? viewport),
                 profile: profile ?? remembered?.profile),
-            defaultTarget: target,
             attachmentDirectory: screenshots.map {
                 URL(fileURLWithPath: ($0 as NSString).expandingTildeInPath)
             })
 
-        let outcome = await runner.run(source: source, fileName: name)
-        try report(outcome, name: name)
-    }
+        // The same call the MCP tool makes. `echo` is the only difference: at a
+        // terminal a script's prints should appear as they happen rather than
+        // arriving in a heap once the flow is over.
+        let report = await LoupeScript.run(request, timeout: timeout) { text in
+            FileHandle.standardOutput.write(Data(text.utf8))
+        }
 
-    /// Print what happened, and set the exit status from it.
-    private func report(_ outcome: ScriptRunner.Outcome, name: String) throws {
-        for url in outcome.attachments {
-            FileHandle.standardError.write(Data("screenshot: \(url.path)\n".utf8))
+        for path in report.attachments {
+            FileHandle.standardError.write(Data("screenshot: \(path)\n".utf8))
         }
-        let seconds = String(format: "%.1fs", outcome.duration)
-        switch outcome.result {
-            case .passed:
-                FileHandle.standardError.write(Data("\(name) passed in \(seconds)\n".utf8))
-            case .skipped(let reason):
-                FileHandle.standardError.write(
-                    Data("\(name) skipped after \(seconds)\(reason.isEmpty ? "" : ": \(reason)")\n".utf8))
-            case .failed(let message):
-                // List every recorded expectation rather than only the summary.
-                // Reporting them together is the entire point of letting a
-                // failed expectation continue.
-                var report = "\(name) FAILED after \(seconds)\n"
-                if outcome.issues.isEmpty {
-                    report += "\(message)\n"
-                } else {
-                    for issue in outcome.issues {
-                        // An issue may be a whole rendered source listing, so the
-                        // bullet marks its first line and the rest indents under it.
-                        let lines = issue.split(separator: "\n", omittingEmptySubsequences: false)
-                        report += "  ✗ \(lines.first ?? "")\n"
-                        for line in lines.dropFirst() where !line.isEmpty {
-                            report += "    \(line)\n"
-                        }
-                    }
-                }
-                FileHandle.standardError.write(Data(report.utf8))
-                throw ExitCode.failure
-        }
+        FileHandle.standardError.write(Data(report.text.utf8))
+        if !report.isSuccess { throw ExitCode.failure }
     }
 }

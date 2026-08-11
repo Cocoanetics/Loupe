@@ -209,3 +209,37 @@ struct ActionRequest {
         return (numbers[0], numbers[1])
     }
 }
+
+extension LoupeMCPServer {
+
+    /// Resolve `loupe_script`'s two ways of naming a script into one.
+    ///
+    /// Both spellings earn their place: an agent that just wrote a flow to disk
+    /// passes the path, and one composing a check on the spot passes the text.
+    /// Supplying neither is the interesting case — an empty script "passes",
+    /// so defaulting to one would report success for a call that ran nothing.
+    static func scriptSource(source: String?, path: String?) throws -> (text: String, name: String) {
+        switch (source, path) {
+            case (let source?, nil):
+                guard !source.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                    throw LoupeError.failed("the script is empty — nothing would run")
+                }
+                return (source, "<script>")
+            case (nil, let path?):
+                let url = URL(fileURLWithPath: (path as NSString).expandingTildeInPath)
+                guard let text = try? String(contentsOf: url, encoding: .utf8) else {
+                    throw LoupeError.failed("cannot read a script at \(url.path)")
+                }
+                return (text, url.lastPathComponent)
+            case (nil, nil):
+                throw LoupeError.failed("no script given — pass `source` with the script, or `path` to a file")
+            case (.some, .some):
+                throw LoupeError.failed("pass either `source` or `path`, not both")
+        }
+    }
+
+    /// A tilde-friendly directory argument.
+    static func directory(_ path: String?) -> URL? {
+        path.map { URL(fileURLWithPath: ($0 as NSString).expandingTildeInPath) }
+    }
+}

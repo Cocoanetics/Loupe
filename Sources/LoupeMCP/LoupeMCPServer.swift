@@ -2,6 +2,7 @@ import Darwin
 import Foundation
 import LoupeKit
 import LoupeSim
+import LoupeXCUI
 import SwiftMCP
 
 /// Loupe's verbs as MCP tools, so an agent driven through ACP/acpx gets exactly
@@ -160,6 +161,64 @@ public actor LoupeMCPServer {
             captureAfter: .default)
         guard let shot else { throw LoupeError.failed("actions ran but no screenshot was produced") }
         return try image(shot.png)
+    }
+
+    /// Run a whole UI flow written in the XCUITest API, and get back what it
+    /// printed plus every expectation that failed, each naming the line it
+    /// failed on.
+    ///
+    /// Reach for this over a chain of `loupe_act` calls when the flow has more
+    /// than a couple of steps, when it needs to wait for something, or when you
+    /// want to read values back — a script can branch, loop, wait, and print,
+    /// and it runs against one session so state carries across steps.
+    ///
+    /// The script is ordinary Swift written against `XCUIApplication`, and it is
+    /// the same source a UI test would contain, so a flow proved here pastes
+    /// into a real test unchanged:
+    ///
+    ///     import XCUIAutomation
+    ///
+    ///     let app = XCUIApplication(target: "mac:MyApp")
+    ///     app.buttons["add-task"].tap()
+    ///     XCTAssertTrue(app.staticTexts["Saved"].waitForExistence(timeout: 10), "never saved")
+    ///     print(app.staticTexts["total"].value)
+    ///
+    /// A failed expectation records and keeps going, so one run reports every
+    /// problem rather than dying at the first. Failures come back rendered with
+    /// the source line and a caret, so go to the line named in `issues` rather
+    /// than re-deriving which step broke.
+    /// - Parameter source: The script itself. Supply this or `path`.
+    /// - Parameter path: A script file on disk to run instead of `source`.
+    /// - Parameter target: What a bare `XCUIApplication()` refers to, e.g. `mac:MyApp`.
+    /// - Parameter viewport: Web viewport as `WxH` CSS pixels, default `1280x900`.
+    /// - Parameter profile: Named persistent web profile, so logins survive between runs.
+    /// - Parameter screenshots: Directory for screenshots the script attaches.
+    /// - Parameter timeout: Seconds before the run is abandoned. Default 120.
+    /// - Returns: JSON with `status` (passed/skipped/failed), `output`, `issues`,
+    ///   `attachments`, and `duration`.
+    @MCPTool
+    public func loupe_script(
+        source: String? = nil,
+        path: String? = nil,
+        target: String? = nil,
+        viewport: String? = nil,
+        profile: String? = nil,
+        screenshots: String? = nil,
+        timeout: Double? = nil
+    ) async throws -> String {
+        let script = try Self.scriptSource(source: source, path: path)
+        let report = await LoupeScript.run(
+            ScriptRequest(
+                source: script.text,
+                fileName: script.name,
+                defaultTarget: try target.map { try Target.parse($0) },
+                options: options(viewport: viewport, scale: nil, profile: profile),
+                attachmentDirectory: Self.directory(screenshots)),
+            // A flow that waits on a screen which never appears would otherwise
+            // hang the caller indefinitely, and an agent has no console to
+            // interrupt from.
+            timeout: timeout ?? 120)
+        return try Self.encode(report)
     }
 
     /// Evaluate JavaScript against a web target and return its result as text.
