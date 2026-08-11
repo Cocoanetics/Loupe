@@ -147,6 +147,11 @@ public actor LoupeMCPServer {
     /// - Parameter setValue: `<element>=<text>`, sets a value directly (full Unicode, no keystrokes). For a
     ///   secret, pass `<element>={{ENV_VAR_NAME}}` — the value is read from the environment on this machine, so
     ///   it never enters your context.
+    ///   The result reports what the field reads afterwards. That is the field,
+    ///   not proof the app committed the value — an app can update the control,
+    ///   reformat what you wrote, and still keep its own. When it matters, check
+    ///   what the app produced (a confirmation, a total that moved), and prefer
+    ///   letting the app fill a value over writing it yourself.
     /// - Parameter click: `x,y` in window points, when there is no element to name.
     ///   Prefix to change space: `screen:1500,900`, `px:240,680`, `n:0.35,0.62`.
     /// - Parameter cursorClick: Same coordinates, but a **real** mouse click.

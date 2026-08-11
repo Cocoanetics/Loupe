@@ -186,6 +186,32 @@ runner the first time it drives a device (~40 s, then cached). Later runs start 
 a few seconds. A black window appearing briefly on the device is that runner; it
 has no UI of its own and backgrounds as soon as it drives your app.
 
+## Writing a value is not the same as the app accepting it
+
+`setValue` writes through the accessibility API, and for most apps that is the
+end of it. When it matters — anything you would not want silently wrong — check
+the **outcome**, not the field you wrote.
+
+The field is the weak witness. An app can update the control, run its formatter
+over what you wrote, hold the value through a focus change, and still never
+commit it. One real accounting app did all four, so every signal available from
+the field said success while the app kept its original value and saved that
+instead. `setValue` therefore reports what the field now reads and stops short
+of claiming the app took it.
+
+What to do about it:
+
+- **Prefer values the app supplies itself.** Selecting the right row first, so a
+  form opens pre-filled, is more reliable than typing the same value in — there
+  is nothing to be silently rejected. Write only the fields you must.
+- **Verify against something the app produced**: a confirmation, a total that
+  moved, a list row that appeared. Those come from its model. The field does not.
+- **Typing is not automatically safer.** Into a formatted field it can be worse:
+  typing `5555` into one currency field yielded `$ 55,00`, because the formatter
+  consumed the keystrokes its own way.
+- If a control ignores `press` entirely, use `cursorClick` — a real click, for
+  controls that expose no working accessibility action.
+
 ## When something will not resolve
 
 A name that does not match exactly is an error, not a near miss to act on. The

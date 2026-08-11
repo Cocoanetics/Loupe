@@ -242,11 +242,22 @@ extension MacDriver {
                     + "secure text field does: macOS will not let accessibility set one, so type "
                     + "into it instead. Capture the window to see what it shows.")
         }
+        // Deliberately not "verified": a read-back proves the field *displays* the
+        // value, which is a weaker claim than it sounds. An app can update the
+        // control, run its formatter over what was written, and still never
+        // commit it to its model — Billings Pro does exactly that, and reported
+        // every signal a cheap check could look at as success while discarding
+        // the write. Saying "verified" there cost a wrong payment. What the
+        // caller has to do instead is confirm from whatever the app produces
+        // next, and only the caller knows what that is.
         return ActionResult(
             message: readBack == value
-                ? "set value of \(name) to '\(Self.truncate(value))' (verified by read-back)"
-                : "set value of \(name); it now reads '\(Self.truncate(readBack))' — the app "
-                    + "reformatted what was written",
+                ? "set value of \(name); the field now reads '\(Self.truncate(value))'. "
+                    + "That is the field, not proof the app committed it — confirm from what the "
+                    + "app does next if it matters."
+                : "set value of \(name); the field now reads '\(Self.truncate(readBack))' — the "
+                    + "app reformatted what was written. Reformatting means its formatter ran, "
+                    + "not that the value was committed.",
             payload: id)
     }
 
