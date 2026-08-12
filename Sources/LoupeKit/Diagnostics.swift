@@ -84,15 +84,37 @@ public enum Diagnostics {
 
     /// What asking for a grant achieved.
     ///
-    /// There is deliberately no `promptShown`. Neither
-    /// `AXIsProcessTrustedWithOptions` nor `CGRequestScreenCaptureAccess`
-    /// reports whether a dialog appeared — both return the current authorization
-    /// state — so any such field would be inferred, and the obvious inference is
-    /// wrong in exactly the case it would exist to catch: a previously denied
-    /// client is still untrusted after asking, which reads identically to never
-    /// having been asked. Callers get the states that can actually be observed
-    /// and a note about the ambiguity, rather than a confident answer nobody can
-    /// derive.
+    /// Two Bools rather than the tri-state macOS models elsewhere
+    /// (`AVAuthorizationStatus.notDetermined` and its two dozen siblings), and
+    /// that is a deliberate limit rather than an oversight.
+    ///
+    /// TCC really does hold three states for these services — measured on macOS
+    /// 26.6, one process, one instant, both public calls returning false:
+    ///
+    ///     AXIsProcessTrusted()             -> false
+    ///     CGPreflightScreenCaptureAccess() -> false
+    ///     TCCAccessPreflight(Accessibility)  -> 1   // denied
+    ///     TCCAccessPreflight(ScreenCapture)  -> 2   // not determined
+    ///
+    /// Nothing public exposes it. Accessibility and Screen Recording are among
+    /// the oldest TCC services and kept their original Boolean shape, so the
+    /// entire public surface is four functions returning `Bool`, and `false`
+    /// collapses "never asked" together with "asked and refused". The tri-state
+    /// is reachable only through private SPI, an entitlement Apple must approve,
+    /// or scraping an undocumented log format — none of which belongs in a tool
+    /// people install with `brew`.
+    ///
+    /// It would also answer a different question than the one worth asking. For
+    /// Accessibility the not-determined state does not survive being looked at:
+    /// the probe above reads *denied* having never shown anyone a dialog, purely
+    /// because something called `AXIsProcessTrusted()` on it once — which
+    /// `doctor` itself does before `--request` ever runs. A `notDetermined` case
+    /// would therefore be wrong in exactly the situation it exists to catch,
+    /// which is the mistake `promptShown` made and the reason there is no
+    /// `promptShown` either.
+    ///
+    /// So: the states that can be observed, plus a note that says plainly no
+    /// *public* API reports the difference.
     public struct AccessResult: Sendable, Codable {
         public var grant: Grant
         public var grantedBefore: Bool
@@ -198,9 +220,10 @@ public enum Diagnostics {
     /// - The system shows each prompt **once per client**. A client that was
     ///   denied — or that answered earlier and had the grant invalidated by a
     ///   rebuild — gets no prompt at all, and the only route left is System
-    ///   Settings. Nothing here can detect that case: the APIs report trust, not
-    ///   whether they put a dialog on screen, so the note says a prompt may not
-    ///   have appeared rather than pretending to know.
+    ///   Settings. No public API detects that case — they report trust, not
+    ///   whether a dialog went on screen — so the note says a prompt may not
+    ///   have appeared rather than pretending to know. See ``AccessResult`` for
+    ///   what the system knows and why Loupe does not go and get it.
     /// - Neither call returns the new state. The user has to answer a dialog
     ///   first, so `grantedNow` is read after the ask and will usually still be
     ///   false; it is the state, not the verdict.
@@ -248,9 +271,8 @@ public enum Diagnostics {
                 : "granted, but this process reads it only at startup — restart it."
         }
         return "asked, and not granted yet. Either a dialog is waiting to be answered, or macOS "
-            + "had already recorded an answer for this binary and did not ask again — nothing "
-            + "here can tell those apart. If no dialog appeared, grant it at "
-            + "\(grant.settingsURL)"
+            + "had already recorded an answer for this binary and did not ask again — no public "
+            + "API reports which, so do not retry in a loop. Grant it at \(grant.settingsURL)"
             + (grant.appliesToRunningProcess ? "." : ", then restart this process.")
     }
 

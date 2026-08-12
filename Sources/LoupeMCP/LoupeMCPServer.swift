@@ -494,7 +494,7 @@ public actor LoupeMCPServer {
     /// - The system shows each prompt **once per binary**. If it has already
     ///   recorded an answer — including one a rebuild invalidated — no dialog
     ///   appears at all, and the only way through is the user visiting
-    ///   `settingsURL`. Nothing can detect that case: the system APIs report
+    ///   `settingsURL`. No public API detects that case: the system APIs report
     ///   authorization, not whether they drew a dialog. So a result that is not
     ///   granted means either "a dialog is waiting" or "there will never be
     ///   one" — do not retry in a loop; surface `settingsURL` to the user.
