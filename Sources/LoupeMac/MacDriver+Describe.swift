@@ -63,6 +63,13 @@ extension MacDriver {
         // concluding the app has no accessibility at all. That is the whole
         // failure this exists to prevent, so it must not be reintroduced by an
         // arbitrary constant.
+        // Reported here, where a bad handle can still be told apart from a filter
+        // that matched nothing. Left to the caller, an empty result from either
+        // cause reads as "no such element" — which sends someone hunting for a
+        // stale handle when the handle was fine.
+        if let root = options.root, !root.isEmpty, element(atPath: root) == nil {
+            throw LoupeError.nodeNotFound(root)
+        }
         var roots = walkTree(options)
         if !hasContent(roots), !hasWokenChromium {
             hasWokenChromium = true
@@ -105,7 +112,11 @@ extension MacDriver {
         // which is the whole point, since the caller got this handle from one.
         if let root = options.root, !root.isEmpty {
             guard let element = element(atPath: root) else { return [] }
-            return walk(element, identity: .root(root), depth: 0, options: options, state: &state)
+            roots = walk(element, identity: .root(root), depth: 0, options: options, state: &state)
+            // Falls through to the filter below rather than returning here:
+            // `--at` and `--filter` are independent, and returning early made the
+            // pair mean something different on this surface than on the others.
+            return applyFilter(options, to: roots)
         }
 
         if let window = windowElement {
@@ -137,10 +148,12 @@ extension MacDriver {
             }
         }
 
-        if let filter = options.filter, !filter.isEmpty {
-            roots = roots.compactMap { prune($0, matching: filter) }
-        }
-        return roots
+        return applyFilter(options, to: roots)
+    }
+
+    private func applyFilter(_ options: DescribeOptions, to roots: [UINode]) -> [UINode] {
+        guard let filter = options.filter, !filter.isEmpty else { return roots }
+        return roots.compactMap { prune($0, matching: filter) }
     }
 
     /// The children of one element, and whatever the walk did not reach.
@@ -353,7 +366,11 @@ extension MacDriver {
     /// in the window a match lives.
     private func prune(_ node: UINode, matching needle: String) -> UINode? {
         let kept = node.children.compactMap { prune($0, matching: needle) }
-        guard node.matches(needle) || !kept.isEmpty else { return nil }
+        // `node.elided != nil` keeps a frontier node whose subtree was never
+        // walked. Dropping it would report "no match" for something that may sit
+        // just below the cap — the same silent false negative this whole change
+        // exists to remove, arriving by a different route.
+        guard node.matches(needle) || !kept.isEmpty || node.elided != nil else { return nil }
         var copy = node
         copy.children = kept
         return copy

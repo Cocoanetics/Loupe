@@ -18,10 +18,16 @@ extension WebDriver {
         try await ensureReady()
         let envelope = try await runScript(
             WebScripts.describeTree(
-                maxDepth: max(options.maxDepth, 1),
+                // A re-rooted read has to reach the branch before it can bound
+                // it, and a web handle — unlike a Mac one — carries no path, so
+                // the branch's depth is not knowable in advance. The walk itself
+                // is in-page and cheap; what `depth` protects is the size of the
+                // answer, and that is still bounded from the branch afterwards.
+                maxDepth: options.root == nil ? max(options.maxDepth, 1) : Self.reRootWalkDepth,
                 interestingOnly: options.interestingOnly,
                 filter: options.filter,
-                generation: generation))
+                generation: generation,
+                root: options.root))
         guard let nodes = envelope.nodes else {
             throw LoupeError.failed("describe returned no tree: \(envelope.message ?? "no reason given")")
         }
@@ -33,6 +39,10 @@ extension WebDriver {
     /// A handle from a previous page is named as stale instead of being looked up —
     /// silently pressing whatever now occupies that slot is how automated tests
     /// produce green runs for broken pages.
+    /// How deep to walk when a caller asked for one branch. Deep enough for any
+    /// real document; the answer is trimmed to the caller's depth from the branch.
+    static let reRootWalkDepth = 64
+
     func resolveHandle(_ needle: String) async throws -> (handle: String, note: String?) {
         if let parsed = parseHandle(needle) {
             guard parsed.generation == generation else {

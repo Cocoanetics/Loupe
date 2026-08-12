@@ -26,6 +26,15 @@ extension SimDriver {
                     + "first, or open the app on the device")
         }
         let roots = try await bridge.describe()
+        // The bridge hands back the whole tree whatever the depth, so re-rooting
+        // is just picking the branch — and it has to happen *before* the prune,
+        // or the depth would be spent reaching the branch instead of exploring it.
+        if let root = options.root, !root.isEmpty {
+            guard let branch = roots.compactMap({ $0.subtree(withID: root) }).first else {
+                throw LoupeError.nodeNotFound(root)
+            }
+            return Self.prune([branch], options: options, depth: 0)
+        }
         return Self.prune(roots, options: options, depth: 0)
     }
 
@@ -59,7 +68,9 @@ extension SimDriver {
             if options.interestingOnly, !Self.isInteresting(node), children.isEmpty, elided == nil {
                 continue
             }
-            if let needle = options.filter, !Self.subtreeMatches(node, needle) {
+            // An elided node survives the filter: its subtree was never walked,
+            // so "does not match" is not something we know.
+            if let needle = options.filter, !Self.subtreeMatches(node, needle), elided == nil {
                 continue
             }
             var copy = node

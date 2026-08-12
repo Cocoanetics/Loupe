@@ -6,7 +6,8 @@ extension WebScripts {
     /// Walk the DOM (plus open shadow roots and same-origin iframes) into a
     /// `UINode`-shaped tree.
     static func describeTree(
-        maxDepth: Int, interestingOnly: Bool, filter: String?, generation: Int
+        maxDepth: Int, interestingOnly: Bool, filter: String?, generation: Int,
+        root: String? = nil
     ) -> String {
         wrap(
             #"""
@@ -14,6 +15,7 @@ extension WebScripts {
             var INTERESTING_ONLY = \#(interestingOnly ? "true" : "false");
             var FILTER = \#(literal(filter));
             var GEN = \#(generation);
+            var ROOT = \#(literal(root));
             """# + "\n" + describeTreeBody)
     }
 
@@ -316,8 +318,16 @@ extension WebScripts {
             if (!node) return kids;
             node.children = kids;
             if (elided) node.elided = elided;
+            // Captured here rather than looked up in the finished tree: handles
+            // are stamped on DOM elements, but an unnamed wrapper is spliced out
+            // of the *output*, so the branch an agent was told to open may not
+            // survive to be found afterwards. Its own subtree is unaffected.
+            if (ROOT && node.id === ROOT) FOUND = node;
 
-            if (NEEDLE && !matchedAncestor && !selfMatches && kids.length === 0) return [];
+            // `!elided`: a frontier node whose subtree was never walked cannot be
+            // ruled out as a match, so dropping it here would report "not found"
+            // for something one level below the cap.
+            if (NEEDLE && !matchedAncestor && !selfMatches && kids.length === 0 && !elided) return [];
             // `!elided` matters: at the depth frontier `kids` is empty, so
             // without it an unnamed wrapper returns nothing and takes its whole
             // subtree with it — silently, which is the one thing describe must
@@ -326,8 +336,14 @@ extension WebScripts {
             return [node];
         }
 
+        var FOUND = null;
         var body = document.body || document.documentElement;
         var roots = body ? walk(body, 1, 0, 0, false) : [];
+        if (ROOT) {
+            return FOUND
+                ? L.ok("described " + ROOT, { nodes: [FOUND] })
+                : L.fail("no element matching " + ROOT + " on this page");
+        }
         var page = {
             id: "g" + GEN + "n0",
             role: "window",

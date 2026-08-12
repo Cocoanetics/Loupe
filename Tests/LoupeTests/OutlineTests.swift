@@ -124,6 +124,52 @@ struct OutlineTests {
         #expect(tree.subtree(withID: "nope") == nil)
     }
 
+    // MARK: Drilling in actually advances
+
+    /// The review caught this: for surfaces that cannot start a walk partway
+    /// down, the branch was extracted *after* the depth had been spent reaching
+    /// it — so drilling into a frontier node returned the same elided node, and
+    /// an agent following the printed `describe at …` would repeat it forever.
+    @Test("a re-rooted branch is bounded from the branch, not from the root")
+    func drillInAdvances() {
+        let deep = UINode(
+            id: "w0", role: "window",
+            children: [
+                UINode(
+                    id: "w0/g0", role: "group",
+                    children: [
+                        UINode(
+                            id: "w0/g0/l0", role: "list", label: "Sidebar",
+                            children: [leaf("w0/g0/l0/c0", "cell", label: "Row")])
+                    ])
+            ])
+
+        // Bounded from the top, the branch is a dead end that names itself.
+        let shallow = deep.limited(toDepth: 2)
+        let frontier = shallow.subtree(withID: "w0/g0/l0")
+        #expect(frontier?.children.isEmpty == true)
+        #expect(frontier?.elided?.children == 1)
+
+        // Bounded from the branch, the same depth buys a level of new content.
+        let opened = deep.subtree(withID: "w0/g0/l0")!.limited(toDepth: 2)
+        #expect(opened.children.count == 1)
+        #expect(opened.children.first?.label == "Row")
+        #expect(opened.elided == nil)
+    }
+
+    @Test("limiting reports what it cut and leaves a shallow tree alone")
+    func limitingIsHonestAndIdempotent() {
+        let tree = UINode(
+            id: "w0", role: "window",
+            children: [leaf("w0/b0", "button", label: "OK")])
+        #expect(tree.limited(toDepth: 5) == tree)
+
+        let cut = tree.limited(toDepth: 0)
+        #expect(cut.children.isEmpty)
+        #expect(cut.elided?.children == 1)
+        #expect(cut.elided?.reason == .depth)
+    }
+
     // MARK: The wire form
 
     /// 88% of nodes on a real tree are leaves, so `"children":[]` alone cost

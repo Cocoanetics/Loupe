@@ -32,6 +32,27 @@ public struct Elision: Codable, Hashable, Sendable {
 }
 
 extension UINode {
+    /// Cut this tree back to `maxDepth` levels below its own root, saying what
+    /// that hid.
+    ///
+    /// For surfaces that cannot start a walk partway down. Without it, drilling
+    /// into a branch that sat on the depth frontier spent the whole budget
+    /// getting *to* the branch and returned the same elided node again — the
+    /// disclosure loop never advanced, so an agent following the printed
+    /// `describe at …` would repeat it forever.
+    public func limited(toDepth maxDepth: Int) -> UINode {
+        var copy = self
+        guard maxDepth > 0 else {
+            if !children.isEmpty {
+                copy.children = []
+                copy.elided = Elision(children: children.count, reason: .depth)
+            }
+            return copy
+        }
+        copy.children = children.map { $0.limited(toDepth: maxDepth - 1) }
+        return copy
+    }
+
     private enum CodingKeys: String, CodingKey {
         case id, role, rawRole, label, value, identifier, frame
         case enabled, focused, actions, children, elided

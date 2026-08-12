@@ -112,8 +112,16 @@ public enum Loupe {
         // sitting at the top and changes nothing. Web and the simulator build the
         // whole tree either way, so taking the branch here is the cheaper of the
         // two honest options — and it means one handle works on every surface.
-        if let branch = nodes.compactMap({ $0.subtree(withID: root) }).first { return [branch] }
-        throw LoupeError.nodeNotFound(root)
+        if let branch = nodes.compactMap({ $0.subtree(withID: root) }).first {
+            // Bounded from the branch, not from the surface root. A driver that
+            // re-rooted its own walk has already done this, and re-applying the
+            // same cap to an already-capped tree changes nothing.
+            return [branch.limited(toDepth: describe.maxDepth)]
+        }
+        // Not an error: every driver reports an unresolvable handle itself, so
+        // reaching here means the branch resolved and a filter emptied it — which
+        // is an ordinary "nothing matched", not a bad handle.
+        return []
     }
 
     /// Run a sequence of actions, then capture. Batching matters: for web and
