@@ -93,36 +93,69 @@ public actor LoupeMCPServer {
         return try image(shot.png)
     }
 
-    /// Read a target's element tree: roles, labels, values, identifiers, frames,
-    /// and which actions each element supports. Use this instead of guessing at
-    /// coordinates from a screenshot — element ids from here are what
-    /// `loupe_act` takes, and they encode what is actually clickable.
+    /// Read a target's element tree — one indented line per element, ending in
+    /// the `[handle]` that `loupe_act` takes. Use this instead of guessing
+    /// coordinates from a screenshot.
+    ///
+    /// Answers arrive progressively, so the first call is cheap:
+    ///
+    /// - A line ending `… 14 children not expanded — depth cap reached
+    ///   (describe at w0/g0/l0)` means there is more under it. Pass that handle
+    ///   as `at` to open just that branch. Nothing is ever dropped silently; if
+    ///   a branch is missing, it is named and counted.
+    /// - On macOS the menu bar arrives collapsed to one line per menu, because on
+    ///   a real app it was 73% of the whole answer. `describe at mb/i3` opens one.
+    ///   `press "Quit"` still finds menu items — resolution is unaffected.
+    ///
     /// - Parameter target: What to inspect.
-    /// - Parameter depth: Maximum tree depth, default 24.
+    /// - Parameter depth: Maximum tree depth, default 24. Counts levels you can
+    ///   *see*: scaffolding a caller never sees no longer spends the budget.
+    /// - Parameter at: Start at this handle instead of the top — the drill-in.
     /// - Parameter filter: Only return elements whose label, value or id contains this.
     ///   Filters the output, not the walk — on a big window `depth` is what makes
     ///   this fast, and a filtered full-depth read is the slowest way to ask.
     /// - Parameter includeAll: Include layout-only nodes too. Default false, which keeps the tree small.
+    /// - Parameter menus: Expand the whole macOS menu bar. Default false.
+    /// - Parameter actions: Show what each element advertises it can do. Off by
+    ///   default because most of them are UI chrome repeated on every container.
+    ///   Worth turning on when a `press` did nothing and you need to know whether
+    ///   the control claims to support it.
+    /// - Parameter format: `outline` (default) or `json`. JSON carries frames,
+    ///   actions and the raw native roles, which the outline leaves out; it costs
+    ///   about four times the bytes to say the same thing.
     /// - Parameter viewport: Web viewport as `WxH`.
     /// - Parameter profile: Named persistent web profile.
-    /// - Returns: JSON array of element trees.
+    /// - Returns: The indented outline, or a JSON array of element trees.
     @MCPTool(readOnlyHint: true)
     public func loupe_describe(
         target: String,
         depth: Int? = nil,
+        at: String? = nil,
         filter: String? = nil,
         includeAll: Bool? = nil,
+        menus: Bool? = nil,
+        actions: Bool? = nil,
+        format: String? = nil,
         viewport: String? = nil,
         profile: String? = nil
     ) async throws -> String {
+        let parsed = try Target.parse(target)
+        let describe = DescribeOptions(
+            maxDepth: depth ?? 24, interestingOnly: !(includeAll ?? false), filter: filter,
+            // A filter is a search: it has to look everywhere, or it reports
+            // "no match" for an element that exists and is one call away.
+            scope: ((menus ?? false) || filter != nil) ? .all : .primary, root: at)
         let nodes = try await Loupe.describe(
-            try Target.parse(target),
-            options: options(viewport: viewport, scale: nil, profile: profile),
-            describe: DescribeOptions(
-                maxDepth: depth ?? 24, interestingOnly: !(includeAll ?? false), filter: filter))
+            parsed, options: options(viewport: viewport, scale: nil, profile: profile),
+            describe: describe)
         // A field's value can hold an interpolated secret; scrub before it reaches
         // the transcript.
-        return Secrets.redact(try Self.encode(nodes))
+        if (format ?? "outline").lowercased() == "json" {
+            return Secrets.redact(try Self.encode(nodes))
+        }
+        let header = "\(target) — \(Outline.census(nodes))"
+        return Secrets.redact(
+            Outline.render(nodes, header: header, actions: actions ?? false))
     }
 
     /// Interact with a target, then return a screenshot of the result.

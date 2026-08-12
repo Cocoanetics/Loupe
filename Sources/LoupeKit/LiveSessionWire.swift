@@ -53,14 +53,24 @@ extension LiveSession {
         var maxDepth: Int
         var interestingOnly: Bool
         var filter: String?
+        // Optional so an older peer's payload still decodes; absent means the
+        // pre-disclosure defaults. Miss these two and a session-driven describe
+        // silently degrades to the full tree — no error anywhere, just the old
+        // 20k-token answer back, in the mode long agent loops actually use.
+        var scope: DescribeOptions.Scope?
+        var root: String?
 
         init(_ options: DescribeOptions) {
             maxDepth = options.maxDepth
             interestingOnly = options.interestingOnly
             filter = options.filter
+            scope = options.scope
+            root = options.root
         }
         var options: DescribeOptions {
-            DescribeOptions(maxDepth: maxDepth, interestingOnly: interestingOnly, filter: filter)
+            DescribeOptions(
+                maxDepth: maxDepth, interestingOnly: interestingOnly, filter: filter,
+                scope: scope ?? .all, root: root)
         }
     }
 

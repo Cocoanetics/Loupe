@@ -105,6 +105,7 @@ extension UINode {
             enabled: wire.enabled ?? true,
             focused: wire.focused ?? false,
             actions: wire.actions ?? [],
-            children: (wire.children ?? []).map(UINode.init(wire:)))
+            children: (wire.children ?? []).map(UINode.init(wire:)),
+            elided: wire.elided)
     }
 }

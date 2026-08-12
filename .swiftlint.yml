@@ -23,6 +23,9 @@ identifier_name:
     # `ok` on a diagnostic check, in the same class as `id`: the JSON is read by
     # models, and a longer name would only be longer.
     - ok
+    # `--at <handle>` / `at:` — the drill-in. The whole point is that an agent
+    # copies it out of an elision line, so it is spelled the short way on purpose.
+    - at
     - x
     - y
     - dx

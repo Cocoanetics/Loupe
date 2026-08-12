@@ -99,28 +99,103 @@ extension MacDriver {
         var state = WalkState(budget: Self.nodeBudget, visited: [])
         var roots: [UINode] = []
 
+        // Re-rooted: open one branch without paying for the tree above it. The
+        // handle is walked back through raw child indices, so ids underneath come
+        // out byte-identical to the ones a full describe would have printed —
+        // which is the whole point, since the caller got this handle from one.
+        if let root = options.root, !root.isEmpty {
+            guard let element = element(atPath: root) else { return [] }
+            return walk(element, identity: .root(root), depth: 0, options: options, state: &state)
+        }
+
         if let window = windowElement {
             roots += walk(
                 window, identity: .root(windowRootID), depth: 0, options: options, state: &state)
         }
-        // A menu bar needs window → menu → item, so there is no point starting one
-        // at all under three levels of depth.
-        if options.maxDepth >= 3, let application = applicationElement,
+        if let application = applicationElement,
             let menuBar = AXAPI.element(application, kAXMenuBarAttribute) {
-            // Menus are wide and repetitive; let them use at most half the budget so
-            // a deep window tree is never starved by the File menu.
-            let allowance = min(state.budget, Self.nodeBudget / 2)
-            var menuState = WalkState(budget: allowance, visited: state.visited)
-            roots += walk(
-                menuBar, identity: .root(menuRootID), depth: 0, options: options, state: &menuState)
-            state.visited = menuState.visited
-            state.budget -= (allowance - menuState.budget)
+            switch options.scope {
+                case .primary:
+                    // 73% of a default describe on a real app was the menu bar, and
+                    // at depth 3 it was 94% — an agent asking about a window paid
+                    // 20k tokens and got the File menu. Named and counted here, one
+                    // call away, rather than expanded into the answer.
+                    roots.append(collapsedMenuBar(menuBar))
+                case .all:
+                    // A menu bar needs window → menu → item, so there is no point
+                    // starting one at all under three levels of depth.
+                    guard options.maxDepth >= 3 else { break }
+                    // Menus are wide and repetitive; let them use at most half the
+                    // budget so a deep window tree is never starved by the File menu.
+                    let allowance = min(state.budget, Self.nodeBudget / 2)
+                    var menuState = WalkState(budget: allowance, visited: state.visited)
+                    roots += walk(
+                        menuBar, identity: .root(menuRootID), depth: 0, options: options,
+                        state: &menuState)
+                    state.visited = menuState.visited
+                    state.budget -= (allowance - menuState.budget)
+            }
         }
 
         if let filter = options.filter, !filter.isEmpty {
             roots = roots.compactMap { prune($0, matching: filter) }
         }
         return roots
+    }
+
+    /// The children of one element, and whatever the walk did not reach.
+    ///
+    /// Split out from ``walk(_:identity:depth:options:state:)`` so both stay
+    /// readable; the two are one operation.
+    private func walkChildren(
+        of element: AXUIElement, parent: String, depth: (own: Int, children: Int),
+        options: DescribeOptions, state: inout WalkState
+    ) -> (children: [UINode], elided: Elision?) {
+        let raw = AXAPI.children(element)
+        guard depth.own < options.maxDepth else {
+            return ([], raw.isEmpty ? nil : Elision(children: raw.count, reason: .depth))
+        }
+        var children: [UINode] = []
+        for (index, child) in raw.enumerated() {
+            guard state.budget > 0 else {
+                return (children, Elision(children: raw.count - index, reason: .budget))
+            }
+            children += walk(
+                child, identity: .child(parent: parent, index: index), depth: depth.children,
+                options: options, state: &state)
+        }
+        return (children, nil)
+    }
+
+    /// The menu bar as one line per menu, with each menu's item count.
+    ///
+    /// Enough to answer "does this app have a Format menu" and to hand back a
+    /// handle for the one menu worth opening, without walking 245 nodes to say so.
+    private func collapsedMenuBar(_ menuBar: AXUIElement) -> UINode {
+        var titles: [UINode] = []
+        for (index, item) in AXAPI.children(menuBar).enumerated() {
+            let id = "\(menuRootID)/\(RoleMap.idTag(for: "menuitem"))\(index)"
+            nodeIndex[id] = item
+            // A menu bar item holds one AXMenu; that menu's children are the items.
+            let count = AXAPI.children(item).first.map { AXAPI.children($0).count } ?? 0
+            titles.append(
+                UINode(
+                    id: id, role: "menuitem",
+                    label: AXAPI.string(item, kAXTitleAttribute),
+                    elided: count > 0 ? Elision(children: count, reason: .collapsed) : nil))
+        }
+        return UINode(id: menuRootID, role: "menu", label: "menu bar", children: titles)
+    }
+
+    /// Drop frames that describe no rectangle.
+    ///
+    /// Menu items report `0 × 0 at (0, 1440)` — off-screen, sizeless, identical
+    /// on every item. Carrying that costs a fifth of the payload and tells a
+    /// caller nothing it could act on. A zero *width* alone is kept: a vertical
+    /// splitter is genuinely 0 × 962.
+    static func meaningfulFrame(_ frame: Frame?) -> Frame? {
+        guard let frame else { return nil }
+        return (frame.width == 0 && frame.height == 0) ? nil : frame
     }
 
     /// The element's identifier, from whichever attribute its toolkit uses.
@@ -190,17 +265,30 @@ extension MacDriver {
 
         let described = attributes(of: element, axRole: axRole)
 
-        var children: [UINode] = []
-        if depth < options.maxDepth {
-            for (index, child) in AXAPI.children(element).enumerated() {
-                if state.budget <= 0 { break }
-                children += walk(
-                    child, identity: .child(parent: id, index: index), depth: depth + 1,
-                    options: options, state: &state)
-            }
-        }
+        // Depth is charged only for nodes that will actually be shown. It used to
+        // count walk levels, so on a SwiftUI window three levels bought a
+        // splitter and two anonymous wrappers — and on the simulator, where
+        // twenty nested containers before anything named is normal, a sensible
+        // depth returned an empty tree that reads as "this app has no
+        // accessibility". Scaffolding the caller never sees should not spend the
+        // caller's budget.
+        let shown = isRoot || !options.interestingOnly || described.isInteresting
+        let childDepth = shown ? depth + 1 : depth
 
-        if !isRoot, options.interestingOnly, !described.isInteresting { return children }
+        let (children, elided) = walkChildren(
+            of: element, parent: id, depth: (own: depth, children: childDepth),
+            options: options, state: &state)
+
+        // A node hiding something is interesting whatever its label says.
+        //
+        // Without the `elided` clause this splice returned `children`, which at
+        // the depth frontier is empty — so an unnamed container deleted itself
+        // *and its entire subtree*, leaving nothing behind to say so. That is how
+        // `--depth 3` on a settings window reported nine elements while the whole
+        // sidebar quietly went missing.
+        if !isRoot, options.interestingOnly, !described.isInteresting, elided == nil {
+            return children
+        }
 
         return [
             UINode(
@@ -210,11 +298,12 @@ extension MacDriver {
                 label: described.label,
                 value: described.value,
                 identifier: described.identifier,
-                frame: AXAPI.frame(element),
+                frame: Self.meaningfulFrame(AXAPI.frame(element)),
                 enabled: AXAPI.bool(element, kAXEnabledAttribute) ?? true,
                 focused: AXAPI.bool(element, kAXFocusedAttribute) ?? false,
                 actions: described.actions,
-                children: children)
+                children: children,
+                elided: elided)
         ]
     }
 

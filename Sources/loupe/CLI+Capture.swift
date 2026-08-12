@@ -67,6 +67,15 @@ struct Describe: AsyncParsableCommand {
     @Option(help: "Only show elements matching this text.")
     var filter: String?
 
+    @Option(help: "Start at this handle instead of the top, to open one branch.")
+    var at: String?
+
+    @Flag(help: "Expand the whole macOS menu bar instead of collapsing it.")
+    var menus = false
+
+    @Flag(help: "Show what each element advertises it can do.")
+    var actions = false
+
     @Flag(help: "Emit JSON instead of an indented outline.")
     var json = false
 
@@ -74,27 +83,21 @@ struct Describe: AsyncParsableCommand {
         let nodes = try await Loupe.describe(
             try target.parsed(),
             options: target.options(),
-            describe: DescribeOptions(maxDepth: depth, interestingOnly: !all, filter: filter))
+            describe: DescribeOptions(
+                maxDepth: depth, interestingOnly: !all, filter: filter,
+                // A filter is a search, and a search that quietly skips the
+                // menu bar would report "no match" for something that is right
+                // there — the exact silent omission this renderer exists to stop.
+                scope: (menus || filter != nil) ? .all : .primary, root: at))
         // A field's value can hold what we just typed into it, so the tree gets the
         // same scrubbing as action output.
         if json {
             print(Secrets.redact(try Out.json(nodes)))
         } else {
-            for node in nodes { printTree(node, indent: 0) }
+            print(Secrets.redact(Outline.render(nodes, actions: actions)))
         }
     }
 
-    private func printTree(_ node: UINode, indent: Int) {
-        var line = String(repeating: "  ", count: indent) + node.role
-        if let label = node.label, !label.isEmpty { line += " \"\(label)\"" }
-        if let value = node.value, !value.isEmpty, value != node.label { line += " = \(value)" }
-        if let id = node.identifier, !id.isEmpty { line += " #\(id)" }
-        if !node.enabled { line += " (disabled)" }
-        if node.focused { line += " (focused)" }
-        line += "  [\(node.id)]"
-        print(Secrets.redact(line))
-        for child in node.children { printTree(child, indent: indent + 1) }
-    }
 }
 
 // MARK: - act

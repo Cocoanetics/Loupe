@@ -270,6 +270,14 @@ extension WebScripts {
             }
 
             var kids = [];
+            var elided = null;
+            if (depth >= MAX_DEPTH) {
+                // Say what was left rather than ending the tree without comment:
+                // a caller cannot tell "nothing here" from "you did not ask deep
+                // enough", and those call for opposite next moves.
+                var rest = childrenOf(el, tag);
+                if (rest.length) elided = { children: rest.length, reason: "depth" };
+            }
             if (depth < MAX_DEPTH) {
                 var cdx = dx, cdy = dy, list = childrenOf(el, tag);
                 if (tag === "iframe" || tag === "frame") {
@@ -293,17 +301,28 @@ extension WebScripts {
                         selfMatches = matchesNeedle(node);
                     }
                 }
+                // Depth counts levels the caller can SEE. A page nested twenty
+                // wrappers deep otherwise spends the whole budget on markup that
+                // never appears in the answer — the same reason the Mac walk
+                // charges only for nodes that survive the splice.
+                var shows = !INTERESTING_ONLY || !node || interesting(node) || selfMatches;
+                var kidDepth = shows ? depth + 1 : depth;
                 for (var i = 0; i < list.length; i++) {
-                    var got = walk(list[i], depth + 1, cdx, cdy, matchedAncestor || selfMatches);
+                    var got = walk(list[i], kidDepth, cdx, cdy, matchedAncestor || selfMatches);
                     for (var k = 0; k < got.length; k++) kids.push(got[k]);
                 }
             }
 
             if (!node) return kids;
             node.children = kids;
+            if (elided) node.elided = elided;
 
             if (NEEDLE && !matchedAncestor && !selfMatches && kids.length === 0) return [];
-            if (INTERESTING_ONLY && !interesting(node) && !selfMatches) return kids;
+            // `!elided` matters: at the depth frontier `kids` is empty, so
+            // without it an unnamed wrapper returns nothing and takes its whole
+            // subtree with it — silently, which is the one thing describe must
+            // never do. A node that is hiding something is interesting.
+            if (INTERESTING_ONLY && !interesting(node) && !selfMatches && !elided) return kids;
             return [node];
         }
 

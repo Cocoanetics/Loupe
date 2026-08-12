@@ -26,7 +26,7 @@ extension MacDriver {
     }
 
     /// Re-walk an id like `w0/g2/b5` through raw child indices.
-    private func element(atPath path: String) -> AXUIElement? {
+    func element(atPath path: String) -> AXUIElement? {
         let segments = path.split(separator: "/")
         guard let first = segments.first else { return nil }
         var current: AXUIElement
