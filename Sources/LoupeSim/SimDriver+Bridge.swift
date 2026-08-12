@@ -26,6 +26,15 @@ extension SimDriver {
                     + "first, or open the app on the device")
         }
         let roots = try await bridge.describe()
+        // The bridge hands back the whole tree whatever the depth, so re-rooting
+        // is just picking the branch — and it has to happen *before* the prune,
+        // or the depth would be spent reaching the branch instead of exploring it.
+        if let root = options.root, !root.isEmpty {
+            guard let branch = roots.compactMap({ $0.subtree(withID: root) }).first else {
+                throw LoupeError.nodeNotFound(root)
+            }
+            return Self.prune([branch], options: options, depth: 0)
+        }
         return Self.prune(roots, options: options, depth: 0)
     }
 
@@ -37,24 +46,36 @@ extension SimDriver {
     static func prune(
         _ nodes: [UINode], options: DescribeOptions, depth: Int
     ) -> [UINode] {
-        guard depth < options.maxDepth else { return [] }
         var kept: [UINode] = []
         for node in nodes {
-            let children = prune(node.children, options: options, depth: depth + 1)
-            if Self.isPassThrough(node) {
+            // At the frontier, say what is under here instead of returning an
+            // empty list. Twenty nested containers before anything named is
+            // normal on this surface, so a caller who stops one level short sees
+            // a screen that looks empty and concludes the app is unreachable.
+            let atFrontier = depth + 1 >= options.maxDepth
+            let children =
+                atFrontier ? [] : prune(node.children, options: options, depth: depth + 1)
+            let elided =
+                (atFrontier && !node.children.isEmpty)
+                ? Elision(children: node.children.count, reason: .depth) : nil
+
+            if Self.isPassThrough(node), elided == nil {
                 // Hoist the children into the parent's place rather than
                 // dropping them with their container.
                 kept.append(contentsOf: children)
                 continue
             }
-            if options.interestingOnly, !Self.isInteresting(node), children.isEmpty {
+            if options.interestingOnly, !Self.isInteresting(node), children.isEmpty, elided == nil {
                 continue
             }
-            if let needle = options.filter, !Self.subtreeMatches(node, needle) {
+            // An elided node survives the filter: its subtree was never walked,
+            // so "does not match" is not something we know.
+            if let needle = options.filter, !Self.subtreeMatches(node, needle), elided == nil {
                 continue
             }
             var copy = node
             copy.children = children
+            copy.elided = elided
             kept.append(copy)
         }
         return kept

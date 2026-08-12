@@ -6,7 +6,8 @@ extension WebScripts {
     /// Walk the DOM (plus open shadow roots and same-origin iframes) into a
     /// `UINode`-shaped tree.
     static func describeTree(
-        maxDepth: Int, interestingOnly: Bool, filter: String?, generation: Int
+        maxDepth: Int, interestingOnly: Bool, filter: String?, generation: Int,
+        root: String? = nil
     ) -> String {
         wrap(
             #"""
@@ -14,6 +15,7 @@ extension WebScripts {
             var INTERESTING_ONLY = \#(interestingOnly ? "true" : "false");
             var FILTER = \#(literal(filter));
             var GEN = \#(generation);
+            var ROOT = \#(literal(root));
             """# + "\n" + describeTreeBody)
     }
 
@@ -270,6 +272,14 @@ extension WebScripts {
             }
 
             var kids = [];
+            var elided = null;
+            if (depth >= MAX_DEPTH) {
+                // Say what was left rather than ending the tree without comment:
+                // a caller cannot tell "nothing here" from "you did not ask deep
+                // enough", and those call for opposite next moves.
+                var rest = childrenOf(el, tag);
+                if (rest.length) elided = { children: rest.length, reason: "depth" };
+            }
             if (depth < MAX_DEPTH) {
                 var cdx = dx, cdy = dy, list = childrenOf(el, tag);
                 if (tag === "iframe" || tag === "frame") {
@@ -293,22 +303,47 @@ extension WebScripts {
                         selfMatches = matchesNeedle(node);
                     }
                 }
+                // Depth counts levels the caller can SEE. A page nested twenty
+                // wrappers deep otherwise spends the whole budget on markup that
+                // never appears in the answer — the same reason the Mac walk
+                // charges only for nodes that survive the splice.
+                var shows = !INTERESTING_ONLY || !node || interesting(node) || selfMatches;
+                var kidDepth = shows ? depth + 1 : depth;
                 for (var i = 0; i < list.length; i++) {
-                    var got = walk(list[i], depth + 1, cdx, cdy, matchedAncestor || selfMatches);
+                    var got = walk(list[i], kidDepth, cdx, cdy, matchedAncestor || selfMatches);
                     for (var k = 0; k < got.length; k++) kids.push(got[k]);
                 }
             }
 
             if (!node) return kids;
             node.children = kids;
+            if (elided) node.elided = elided;
+            // Captured here rather than looked up in the finished tree: handles
+            // are stamped on DOM elements, but an unnamed wrapper is spliced out
+            // of the *output*, so the branch an agent was told to open may not
+            // survive to be found afterwards. Its own subtree is unaffected.
+            if (ROOT && node.id === ROOT) FOUND = node;
 
-            if (NEEDLE && !matchedAncestor && !selfMatches && kids.length === 0) return [];
-            if (INTERESTING_ONLY && !interesting(node) && !selfMatches) return kids;
+            // `!elided`: a frontier node whose subtree was never walked cannot be
+            // ruled out as a match, so dropping it here would report "not found"
+            // for something one level below the cap.
+            if (NEEDLE && !matchedAncestor && !selfMatches && kids.length === 0 && !elided) return [];
+            // `!elided` matters: at the depth frontier `kids` is empty, so
+            // without it an unnamed wrapper returns nothing and takes its whole
+            // subtree with it — silently, which is the one thing describe must
+            // never do. A node that is hiding something is interesting.
+            if (INTERESTING_ONLY && !interesting(node) && !selfMatches && !elided) return kids;
             return [node];
         }
 
+        var FOUND = null;
         var body = document.body || document.documentElement;
         var roots = body ? walk(body, 1, 0, 0, false) : [];
+        if (ROOT) {
+            return FOUND
+                ? L.ok("described " + ROOT, { nodes: [FOUND] })
+                : L.fail("no element matching " + ROOT + " on this page");
+        }
         var page = {
             id: "g" + GEN + "n0",
             role: "window",

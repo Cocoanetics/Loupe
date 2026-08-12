@@ -93,36 +93,69 @@ public actor LoupeMCPServer {
         return try image(shot.png)
     }
 
-    /// Read a target's element tree: roles, labels, values, identifiers, frames,
-    /// and which actions each element supports. Use this instead of guessing at
-    /// coordinates from a screenshot — element ids from here are what
-    /// `loupe_act` takes, and they encode what is actually clickable.
+    /// Read a target's element tree — one indented line per element, ending in
+    /// the `[handle]` that `loupe_act` takes. Use this instead of guessing
+    /// coordinates from a screenshot.
+    ///
+    /// Answers arrive progressively, so the first call is cheap:
+    ///
+    /// - A line ending `… 14 children not expanded — depth cap reached
+    ///   (describe at w0/g0/l0)` means there is more under it. Pass that handle
+    ///   as `at` to open just that branch. Nothing is ever dropped silently; if
+    ///   a branch is missing, it is named and counted.
+    /// - On macOS the menu bar arrives collapsed to one line per menu, because on
+    ///   a real app it was 73% of the whole answer. `describe at mb/i3` opens one.
+    ///   `press "Quit"` still finds menu items — resolution is unaffected.
+    ///
     /// - Parameter target: What to inspect.
-    /// - Parameter depth: Maximum tree depth, default 24.
+    /// - Parameter depth: Maximum tree depth, default 24. Counts levels you can
+    ///   *see*: scaffolding a caller never sees no longer spends the budget.
+    /// - Parameter at: Start at this handle instead of the top — the drill-in.
     /// - Parameter filter: Only return elements whose label, value or id contains this.
     ///   Filters the output, not the walk — on a big window `depth` is what makes
     ///   this fast, and a filtered full-depth read is the slowest way to ask.
     /// - Parameter includeAll: Include layout-only nodes too. Default false, which keeps the tree small.
+    /// - Parameter menus: Expand the whole macOS menu bar. Default false.
+    /// - Parameter actions: Show what each element advertises it can do. Off by
+    ///   default because most of them are UI chrome repeated on every container.
+    ///   Worth turning on when a `press` did nothing and you need to know whether
+    ///   the control claims to support it.
+    /// - Parameter format: `outline` (default) or `json`. JSON carries frames,
+    ///   actions and the raw native roles, which the outline leaves out; it costs
+    ///   about four times the bytes to say the same thing.
     /// - Parameter viewport: Web viewport as `WxH`.
     /// - Parameter profile: Named persistent web profile.
-    /// - Returns: JSON array of element trees.
+    /// - Returns: The indented outline, or a JSON array of element trees.
     @MCPTool(readOnlyHint: true)
     public func loupe_describe(
         target: String,
         depth: Int? = nil,
+        at: String? = nil,
         filter: String? = nil,
         includeAll: Bool? = nil,
+        menus: Bool? = nil,
+        actions: Bool? = nil,
+        format: String? = nil,
         viewport: String? = nil,
         profile: String? = nil
     ) async throws -> String {
+        let parsed = try Target.parse(target)
+        let describe = DescribeOptions(
+            maxDepth: depth ?? 24, interestingOnly: !(includeAll ?? false), filter: filter,
+            // A filter is a search: it has to look everywhere, or it reports
+            // "no match" for an element that exists and is one call away.
+            scope: ((menus ?? false) || filter != nil) ? .all : .primary, root: at)
         let nodes = try await Loupe.describe(
-            try Target.parse(target),
-            options: options(viewport: viewport, scale: nil, profile: profile),
-            describe: DescribeOptions(
-                maxDepth: depth ?? 24, interestingOnly: !(includeAll ?? false), filter: filter))
+            parsed, options: options(viewport: viewport, scale: nil, profile: profile),
+            describe: describe)
         // A field's value can hold an interpolated secret; scrub before it reaches
         // the transcript.
-        return Secrets.redact(try Self.encode(nodes))
+        if (format ?? "outline").lowercased() == "json" {
+            return Secrets.redact(try Self.encode(nodes))
+        }
+        let header = "\(target) — \(Outline.census(nodes))"
+        return Secrets.redact(
+            Outline.render(nodes, header: header, actions: actions ?? false))
     }
 
     /// Interact with a target, then return a screenshot of the result.
@@ -474,8 +507,52 @@ public actor LoupeMCPServer {
     /// Check which surfaces are usable and what permission is missing if one is
     /// not. Call this when a capture fails in a way that looks like a
     /// permissions problem — an empty tree or a black image usually is one.
+    ///
+    /// Each check carries `ok`, a `remedy`, and — where a permission is what is
+    /// missing — a `grant`. Act on `grant` and hand it to
+    /// `loupe_request_access`; the remedy prose is written for someone sitting
+    /// at a terminal, and following it is not something you can do.
+    /// - Returns: JSON with `surfaces`, `allGood`, and human-readable `lines`.
     @MCPTool(readOnlyHint: true)
     public func loupe_doctor() async throws -> String {
-        await Diagnostics.run().lines.joined(separator: "\n")
+        try Self.encode(await Diagnostics.run())
+    }
+
+    /// Ask macOS for a permission Loupe is missing, instead of telling the user
+    /// to go and get it.
+    ///
+    /// Reach for this when `loupe_doctor` reports a missing grant. What comes
+    /// back is what the ask achieved, which is not always a grant:
+    ///
+    /// - The system shows each prompt **once per binary**. If it has already
+    ///   recorded an answer — including one a rebuild invalidated — no dialog
+    ///   appears at all, and the only way through is the user visiting
+    ///   `settingsURL`. No public API detects that case: the system APIs report
+    ///   authorization, not whether they drew a dialog. So a result that is not
+    ///   granted means either "a dialog is waiting" or "there will never be
+    ///   one" — do not retry in a loop; surface `settingsURL` to the user.
+    /// - `grantedNow` is read straight after asking, so it is usually still
+    ///   false: there is a dialog for the user to answer first. It reports
+    ///   state, not success.
+    /// - Screen Recording is read once when a process starts, so even after the
+    ///   user agrees this server stays blind until it is restarted. A capture
+    ///   failing right after a grant is expected, not a second fault.
+    /// - Parameter grant: `accessibility` or `screenRecording`. Omit for both.
+    /// - Returns: JSON per grant: `grantedBefore`, `grantedNow`, `settingsURL`,
+    ///   and a `note` saying what to do next.
+    @MCPTool
+    public func loupe_request_access(grant: String? = nil) async throws -> String {
+        let wanted: [Diagnostics.Grant]
+        if let grant {
+            guard let parsed = Diagnostics.Grant(rawValue: grant) else {
+                throw LoupeError.failed(
+                    "unknown grant '\(grant)' — use "
+                        + Diagnostics.Grant.allCases.map(\.rawValue).joined(separator: " or "))
+            }
+            wanted = [parsed]
+        } else {
+            wanted = Diagnostics.Grant.allCases
+        }
+        return try Self.encode(await Diagnostics.requestAccess(wanted))
     }
 }

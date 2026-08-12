@@ -1,4 +1,5 @@
 import Foundation
+import LoupeCore
 
 // The envelope protocol the injected scripts speak, and the wire shape of a
 // described element. Top-level rather than nested inside ``WebScripts`` so each
@@ -39,13 +40,14 @@ struct WireNode: Decodable {
     var focused: Bool?
     var actions: [String]?
     var children: [WireNode]?
+    var elided: Elision?
 
     /// The wire keeps the frame flat (`x`, `y`, `w`, `h`) because a nested object
     /// per node measurably inflates the JSON for a big page, and the tree is the
     /// largest thing this driver ever moves across the bridge. Swift spells the
     /// two abbreviated names out again.
     private enum CodingKeys: String, CodingKey {
-        case id, role, rawRole, label, value, identifier
+        case id, role, rawRole, label, value, identifier, elided
         case x, y
         case width = "w"
         case height = "h"

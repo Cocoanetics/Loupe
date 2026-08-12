@@ -50,6 +50,10 @@ public struct UINode: Codable, Hashable, Sendable {
     /// silent no-op.
     public var actions: [String]
     public var children: [UINode]
+    /// Set when this node has content that was not walked. Its presence is also
+    /// what keeps an unnamed container alive: a node that is hiding something is
+    /// interesting by definition, whatever its label says.
+    public var elided: Elision?
 
     public init(
         id: String,
@@ -62,7 +66,8 @@ public struct UINode: Codable, Hashable, Sendable {
         enabled: Bool = true,
         focused: Bool = false,
         actions: [String] = [],
-        children: [UINode] = []
+        children: [UINode] = [],
+        elided: Elision? = nil
     ) {
         self.id = id
         self.role = role
@@ -75,11 +80,25 @@ public struct UINode: Codable, Hashable, Sendable {
         self.focused = focused
         self.actions = actions
         self.children = children
+        self.elided = elided
     }
 
     /// Depth-first walk including `self`.
     public func flattened() -> [UINode] {
         [self] + children.flatMap { $0.flattened() }
+    }
+
+    /// The subtree rooted at `handle`, or nil if this tree does not contain it.
+    ///
+    /// The fallback for surfaces that cannot cheaply re-root a walk: describe
+    /// everything, then hand back the one branch that was asked for. Costs the
+    /// full walk, so a driver that *can* start lower down should.
+    public func subtree(withID handle: String) -> UINode? {
+        if id == handle { return self }
+        for child in children {
+            if let hit = child.subtree(withID: handle) { return hit }
+        }
+        return nil
     }
 
     /// Case-insensitive substring match over label, value and identifier.
@@ -185,13 +204,11 @@ public struct ActionResult: Sendable {
     // `ok` reads perfectly at every call site (`if !result.ok`) and is public API
     // that all four drivers construct and the CLI consumes — a longer name here
     // would be a source break bought with no clarity.
-    // swiftlint:disable:next identifier_name
     public var ok: Bool
     public var message: String
     /// Anything the action produced (JS return value, launched pid, …).
     public var payload: String?
 
-    // swiftlint:disable:next identifier_name
     public init(ok: Bool = true, message: String, payload: String? = nil) {
         self.ok = ok
         self.message = message
@@ -234,11 +251,38 @@ public struct DescribeOptions: Sendable {
     public var interestingOnly: Bool
     /// Only return nodes matching this text.
     public var filter: String?
+    /// How much of the surface to expand.
+    public var scope: Scope
+    /// Start the walk at this handle instead of the top, so a caller can open one
+    /// branch without paying for the whole tree again.
+    public var root: String?
 
-    public init(maxDepth: Int = 24, interestingOnly: Bool = true, filter: String? = nil) {
+    /// Which trees a describe expands.
+    ///
+    /// The default is ``all`` and must stay that way: ``UIDriver/resolve(_:options:)``
+    /// runs through `describe`, so a default that skipped the menu bar would make
+    /// `press "Quit"` fail — and, worse, would drop menu items from the
+    /// near-miss list, turning "here are the three things that nearly match" into
+    /// "nothing matches" for an element that plainly exists. Presentation
+    /// entry points opt into ``primary``; resolution never does.
+    public enum Scope: String, Sendable, Codable {
+        /// Everything the surface exposes, menu bar included.
+        case all
+        /// The window's own content. Peripheral trees are named and counted, not
+        /// expanded — on macOS the menu bar is 73% of a default describe and is
+        /// almost never what was being asked about.
+        case primary
+    }
+
+    public init(
+        maxDepth: Int = 24, interestingOnly: Bool = true, filter: String? = nil,
+        scope: Scope = .all, root: String? = nil
+    ) {
         self.maxDepth = maxDepth
         self.interestingOnly = interestingOnly
         self.filter = filter
+        self.scope = scope
+        self.root = root
     }
 
     public static let `default` = DescribeOptions()

@@ -47,6 +47,36 @@ group #Tasks
     button "Task 1, Notes for task 1" #task-1
 ```
 
+**The answer arrives in layers, so the first look is cheap.** A line like this
+means there is more underneath, and it hands you the call that opens it:
+
+```
+list "Sidebar"  [w0/g0/l0]
+  … 14 children not expanded — depth cap reached  (describe at w0/g0/l0)
+```
+
+```bash
+loupe describe --at w0/g0/l0
+```
+
+Nothing is ever dropped in silence. If a branch is missing from the output it is
+named and counted first, so "there is nothing here" and "you did not ask deep
+enough" never look alike — they call for opposite next moves.
+
+On macOS the menu bar arrives collapsed to one line per menu, with each menu's
+item count, because on a real app it was 73% of the whole answer and almost never
+the thing being asked about. Open one with `describe --at mb/i3`, or pass
+`--menus` for all of them. Resolution is unaffected: `press "Quit"` still finds
+menu items, and so does `--filter`, which always searches everywhere.
+
+Two things the outline leaves out, both a flag away:
+
+- **What an element can do** — `--actions`. Off by default because most of it is
+  chrome repeated on every container. Turn it on when a `press` did nothing and
+  you need to know whether the control even claims to support it.
+- **Frames** — `--json`, which carries everything: coordinates, native roles,
+  the lot, at about four times the bytes.
+
 Anything with a `#` has an accessibility identifier — use that. It survives copy
 changes and translation; a visible label does not.
 
@@ -230,7 +260,9 @@ listing does not make the right target obvious, fall back to looking:
 
 In order, and each is quick:
 
-1. `loupe describe` — is the element there at all, under a different name?
+1. `loupe describe` — is the element there at all, under a different name? Check
+   for a `… not expanded` line first: the thing you want may simply be one
+   `--at` away rather than missing.
 2. `loupe capture --annotate --out shot.png` — numbered boxes over every
    actionable element, so you can see what Loupe thinks is addressable.
 3. `loupe doctor` — permissions (Accessibility, Screen Recording) and setup.
