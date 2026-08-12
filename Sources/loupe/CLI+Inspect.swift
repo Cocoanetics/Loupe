@@ -112,13 +112,38 @@ struct AtCommand: AsyncParsableCommand {
 struct Doctor: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "doctor",
-        abstract: "Check the permissions and tools each surface needs.")
+        abstract: "Check the permissions and tools each surface needs.",
+        discussion: """
+            With --request, asks macOS for whatever is missing instead of only \
+            naming it. The system shows each prompt once per binary, so a client \
+            that was already answered for — or whose grant a rebuild invalidated \
+            — gets no dialog; that is reported, along with where to grant it by \
+            hand. Screen Recording reaches a running process only after a restart.
+            """)
+
+    @Flag(help: "Ask the system for any missing permission, rather than only reporting it.")
+    var request = false
+
+    @Flag(help: "Emit the report as JSON.")
+    var json = false
 
     func run() async throws {
+        if request {
+            for result in await Diagnostics.requestAccess() {
+                print("\(result.grant.rawValue): \(result.note)")
+            }
+            print("")
+        }
+
         let report = await Diagnostics.run()
-        for line in report.lines { print(line) }
+        if json {
+            let data = try JSONEncoder().encode(report)
+            print(String(bytes: data, encoding: .utf8) ?? "")
+        } else {
+            for line in report.lines { print(line) }
+        }
         if !report.allGood {
-            print("\nSome surfaces are unavailable. Fix the items marked ✗ above.")
+            if !json { print("\nSome surfaces are unavailable. Fix the items marked ✗ above.") }
             throw ExitCode(1)
         }
     }

@@ -185,13 +185,11 @@ public struct ActionResult: Sendable {
     // `ok` reads perfectly at every call site (`if !result.ok`) and is public API
     // that all four drivers construct and the CLI consumes — a longer name here
     // would be a source break bought with no clarity.
-    // swiftlint:disable:next identifier_name
     public var ok: Bool
     public var message: String
     /// Anything the action produced (JS return value, launched pid, …).
     public var payload: String?
 
-    // swiftlint:disable:next identifier_name
     public init(ok: Bool = true, message: String, payload: String? = nil) {
         self.ok = ok
         self.message = message
