@@ -493,8 +493,11 @@ public actor LoupeMCPServer {
     ///
     /// - The system shows each prompt **once per binary**. If it has already
     ///   recorded an answer — including one a rebuild invalidated — no dialog
-    ///   appears, `promptShown` is false, and the only way through is the user
-    ///   visiting `settingsURL` themselves. Say so rather than retrying.
+    ///   appears at all, and the only way through is the user visiting
+    ///   `settingsURL`. Nothing can detect that case: the system APIs report
+    ///   authorization, not whether they drew a dialog. So a result that is not
+    ///   granted means either "a dialog is waiting" or "there will never be
+    ///   one" — do not retry in a loop; surface `settingsURL` to the user.
     /// - `grantedNow` is read straight after asking, so it is usually still
     ///   false: there is a dialog for the user to answer first. It reports
     ///   state, not success.
@@ -502,8 +505,8 @@ public actor LoupeMCPServer {
     ///   user agrees this server stays blind until it is restarted. A capture
     ///   failing right after a grant is expected, not a second fault.
     /// - Parameter grant: `accessibility` or `screenRecording`. Omit for both.
-    /// - Returns: JSON per grant: `grantedBefore`, `grantedNow`, `promptShown`,
-    ///   `settingsURL`, and a `note` saying what to do next.
+    /// - Returns: JSON per grant: `grantedBefore`, `grantedNow`, `settingsURL`,
+    ///   and a `note` saying what to do next.
     @MCPTool
     public func loupe_request_access(grant: String? = nil) async throws -> String {
         let wanted: [Diagnostics.Grant]

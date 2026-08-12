@@ -128,18 +128,21 @@ struct Doctor: AsyncParsableCommand {
     var json = false
 
     func run() async throws {
-        if request {
-            for result in await Diagnostics.requestAccess() {
-                print("\(result.grant.rawValue): \(result.note)")
-            }
-            print("")
-        }
+        let requested = request ? await Diagnostics.requestAccess() : nil
 
-        let report = await Diagnostics.run()
+        var report = await Diagnostics.run()
+        report.requested = requested
         if json {
+            // Everything goes in the one object. Printing the request lines as
+            // prose first would leave stdout unparseable for anyone piping this
+            // to jq, which is the only reason --json exists.
             let data = try JSONEncoder().encode(report)
             print(String(bytes: data, encoding: .utf8) ?? "")
         } else {
+            for result in requested ?? [] {
+                print("\(result.grant.rawValue): \(result.note)")
+            }
+            if requested != nil { print("") }
             for line in report.lines { print(line) }
         }
         if !report.allGood {

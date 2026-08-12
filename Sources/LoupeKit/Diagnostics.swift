@@ -73,6 +73,9 @@ public enum Diagnostics {
         public var surfaces: [Surface]
         public var lines: [String]
         public var allGood: Bool
+        /// Present when the caller asked for grants in the same run, so `--json`
+        /// emits one object rather than prose followed by JSON.
+        public var requested: [AccessResult]?
 
         public var missingGrants: [Grant] {
             surfaces.flatMap(\.checks).filter { !$0.ok }.compactMap(\.grant)
@@ -80,14 +83,20 @@ public enum Diagnostics {
     }
 
     /// What asking for a grant achieved.
+    ///
+    /// There is deliberately no `promptShown`. Neither
+    /// `AXIsProcessTrustedWithOptions` nor `CGRequestScreenCaptureAccess`
+    /// reports whether a dialog appeared — both return the current authorization
+    /// state — so any such field would be inferred, and the obvious inference is
+    /// wrong in exactly the case it would exist to catch: a previously denied
+    /// client is still untrusted after asking, which reads identically to never
+    /// having been asked. Callers get the states that can actually be observed
+    /// and a note about the ambiguity, rather than a confident answer nobody can
+    /// derive.
     public struct AccessResult: Sendable, Codable {
         public var grant: Grant
         public var grantedBefore: Bool
         public var grantedNow: Bool
-        /// False when the system had already recorded a decision: macOS shows
-        /// the prompt once, so a previously denied client gets nothing and the
-        /// only way through is System Settings.
-        public var promptShown: Bool
         public var settingsURL: String
         public var note: String
     }
@@ -97,7 +106,7 @@ public enum Diagnostics {
         let surfaces = [webSurface(), macSurface(), simulatorSurface()]
         return Report(
             surfaces: surfaces, lines: render(surfaces),
-            allGood: surfaces.allSatisfy(\.ok))
+            allGood: surfaces.allSatisfy(\.ok), requested: nil)
     }
 
     /// The prose form, derived from the structure rather than built beside it.
@@ -189,7 +198,9 @@ public enum Diagnostics {
     /// - The system shows each prompt **once per client**. A client that was
     ///   denied — or that answered earlier and had the grant invalidated by a
     ///   rebuild — gets no prompt at all, and the only route left is System
-    ///   Settings. That case is reported rather than left looking like a no-op.
+    ///   Settings. Nothing here can detect that case: the APIs report trust, not
+    ///   whether they put a dialog on screen, so the note says a prompt may not
+    ///   have appeared rather than pretending to know.
     /// - Neither call returns the new state. The user has to answer a dialog
     ///   first, so `grantedNow` is read after the ask and will usually still be
     ///   false; it is the state, not the verdict.
@@ -200,21 +211,23 @@ public enum Diagnostics {
         var results: [AccessResult] = []
         for grant in grants {
             let before = isGranted(grant)
-            var shown = false
-            switch grant {
-                case .accessibility:
-                    if !before {
-                        shown = !AXIsProcessTrustedWithOptions(
+            if !before {
+                // Return values ignored on purpose: both report authorization,
+                // and reading them as "a dialog appeared" is wrong precisely
+                // when it matters.
+                switch grant {
+                    case .accessibility:
+                        _ = AXIsProcessTrustedWithOptions(
                             ["AXTrustedCheckOptionPrompt": true] as CFDictionary)
-                    }
-                case .screenRecording:
-                    if !before { shown = !CGRequestScreenCaptureAccess() }
+                    case .screenRecording:
+                        _ = CGRequestScreenCaptureAccess()
+                }
             }
             let after = isGranted(grant)
             results.append(
                 AccessResult(
                     grant: grant, grantedBefore: before, grantedNow: after,
-                    promptShown: shown, settingsURL: grant.settingsURL,
+                    settingsURL: grant.settingsURL,
                     note: note(grant: grant, before: before, after: after)))
         }
         return results
@@ -234,8 +247,10 @@ public enum Diagnostics {
                 ? "granted, and in effect immediately."
                 : "granted, but this process reads it only at startup — restart it."
         }
-        return "asked. If no dialog appeared, macOS had already recorded an answer for this "
-            + "binary and will not ask again — open \(grant.settingsURL) and grant it there"
+        return "asked, and not granted yet. Either a dialog is waiting to be answered, or macOS "
+            + "had already recorded an answer for this binary and did not ask again — nothing "
+            + "here can tell those apart. If no dialog appeared, grant it at "
+            + "\(grant.settingsURL)"
             + (grant.appliesToRunningProcess ? "." : ", then restart this process.")
     }
 

@@ -26,7 +26,7 @@ struct DiagnosticsTests {
                             remedy: "unlock", grant: nil)
                     ])
             ],
-            lines: [], allGood: false)
+            lines: [], allGood: false, requested: nil)
         #expect(report.missingGrants == [.accessibility])
     }
 
@@ -65,6 +65,39 @@ struct DiagnosticsTests {
         #expect(Diagnostics.Grant(rawValue: grant.rawValue) == grant)
     }
 
+    /// The Codex review caught this: with `--request` the prose lines were
+    /// printed before the JSON, so stdout would not parse. Everything the run
+    /// produced has to be inside the one object.
+    @Test("a requested grant travels inside the report, not beside it")
+    func requestedGrantsRideAlongInJSON() throws {
+        var report = Diagnostics.Report(surfaces: [], lines: [], allGood: true, requested: nil)
+        report.requested = [
+            Diagnostics.AccessResult(
+                grant: .screenRecording, grantedBefore: false, grantedNow: false,
+                settingsURL: Diagnostics.Grant.screenRecording.settingsURL, note: "asked.")
+        ]
+        let data = try JSONEncoder().encode(report)
+        let decoded = try JSONDecoder().decode(Diagnostics.Report.self, from: data)
+        #expect(decoded.requested?.count == 1)
+        #expect(decoded.requested?.first?.grant == .screenRecording)
+        // The whole payload is one JSON value — nothing printed alongside it.
+        #expect((try? JSONSerialization.jsonObject(with: data)) != nil)
+    }
+
+    /// Also from review: both APIs report authorization, never whether a dialog
+    /// was drawn, so a `promptShown` field could only ever have been guessed —
+    /// and the obvious guess is wrong exactly when a grant was already denied.
+    @Test("an access result claims only what can be observed")
+    func accessResultDoesNotClaimPromptVisibility() throws {
+        let result = Diagnostics.AccessResult(
+            grant: .accessibility, grantedBefore: false, grantedNow: false,
+            settingsURL: Diagnostics.Grant.accessibility.settingsURL, note: "asked.")
+        let json = try JSONSerialization.jsonObject(
+            with: try JSONEncoder().encode(result)) as? [String: Any]
+        #expect(json?["promptShown"] == nil)
+        #expect(json?["grantedNow"] as? Bool == false)
+    }
+
     @Test("the report encodes for a caller that reads JSON")
     func reportEncodes() throws {
         let report = Diagnostics.Report(
@@ -76,7 +109,7 @@ struct DiagnosticsTests {
                             name: "WebKit", ok: true, warningOnly: false, remedy: nil, grant: nil)
                     ])
             ],
-            lines: ["Web", "✓ WebKit"], allGood: true)
+            lines: ["Web", "✓ WebKit"], allGood: true, requested: nil)
         let decoded = try JSONDecoder().decode(
             Diagnostics.Report.self, from: try JSONEncoder().encode(report))
         #expect(decoded.allGood)
