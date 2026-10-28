@@ -238,4 +238,24 @@ private final class FakeRecorder: RecordingDriver, @unchecked Sendable {
             _ = try await VideoConverter.encode(sampleCount: 2, duration: 2, options: GIFOptions()) { _ in nil }
         }
     }
+
+    @Test func cancellingTheCallerStopsActionsAtOnceAndStillFinalizes() async throws {
+        let recorder = FakeRecorder(actionDuration: 30)
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("fake-\(UUID()).mp4")
+        let started = Date()
+        let task = Task {
+            try await Loupe.recordSession(
+                on: recorder,
+                Loupe.Session(
+                    url: url, record: RecordOptions(maxDuration: 60), region: nil,
+                    actions: [.navigate("x")], stop: .after(5)))
+        }
+        try await Task.sleep(for: .milliseconds(200))
+        task.cancel()
+        let result = try await task.value
+        // Ctrl-C is a graceful stop: finalized and returned, not 30s or 60s later.
+        #expect(Date().timeIntervalSince(started) < 3)
+        #expect(result.url == url)
+        #expect(recorder.stopCount == 1)
+    }
 }
