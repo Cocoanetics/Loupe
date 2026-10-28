@@ -481,14 +481,14 @@ and bracket the steps. The session's process holds the recorder in between:
 
 ```
 loupe session open sim:booted --as phone
-loupe record start @phone
+loupe record @phone start
 loupe press @phone Login
 loupe wait @phone Dashboard
-loupe record stop @phone --out login.mp4 --gif
+loupe record @phone stop --out login.mp4 --gif
 ```
 
-`record start` takes `--region`/`--element`; `record stop` takes `--out`, `--gif`
-and `--appstore`. A recording nobody stops ends on its own at the 120 s limit, and
+The target comes first, as with every verb. `start` takes `--region`/`--element`;
+`stop` takes `--out`, `--gif` and `--appstore`. A recording nobody stops ends on its own at the 120 s limit, and
 closing the session finalizes it too.
 
 To record only part of the screen and cut the file size, give `--region x,y,w,h` or

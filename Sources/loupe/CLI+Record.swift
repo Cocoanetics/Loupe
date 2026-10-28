@@ -21,9 +21,9 @@ struct Record: AsyncParsableCommand {
             To record across several commands, open a session and bracket them:
 
               loupe session open sim:booted --as phone
-              loupe record start @phone
+              loupe record @phone start
               loupe press @phone Login
-              loupe record stop @phone --out login.mp4 --gif
+              loupe record @phone stop --out login.mp4 --gif
 
             `--gif` also writes an animated GIF next to the video (or only the GIF \
             when `--out` ends in .gif). Frames that do not change are folded into one \
@@ -132,7 +132,7 @@ extension Record {
                 is what holds the recorder in between. Open one first:
 
                   loupe session open sim:booted --as phone
-                  loupe record start @phone
+                  loupe record @phone start
 
                 The recording stops on its own after \(Int(RecordOptions.hardLimit)) seconds \
                 if nothing stops it sooner.
@@ -149,7 +149,7 @@ extension Record {
             options.region = try region.parsed()
             _ = try await driver.startRecording(
                 to: RecordingPipeline.scratchURL("loupe-session", "mov"), options: options)
-            print("recording \(parsed) — stop with `loupe record stop \(parsed)`")
+            print("recording \(parsed) — stop with `loupe record \(parsed) stop`")
         }
     }
 
@@ -173,11 +173,11 @@ extension Record {
     /// The session behind `@name`, or a pointer at how to get one.
     static func session(_ target: Target) throws -> LiveSessionDriver {
         guard target.surface == .live else {
+            let name = LiveSession.suggestedName(for: target)
             throw ValidationError(
-                "`record start` and `record stop` work on a live session (@name), whose process holds the "
-                    + "recording between commands. Open one with `loupe session open \(target) --as "
-                    + "\(LiveSession.suggestedName(for: target))`, or record in one go: "
-                    + "`loupe record \(target) --duration 10s`.")
+                "`record <@name> start` and `record <@name> stop` work on a live session, whose process holds the "
+                    + "recording between commands. Open one with `loupe session open \(target) --as \(name)` and "
+                    + "give `@\(name)` first, or record in one go: `loupe record \(target) --duration 10s`.")
         }
         return try LiveSessionDriver(name: target.locator)
     }
