@@ -165,6 +165,47 @@ private final class FrameQueue: @unchecked Sendable {
         #expect(FileManager.default.fileExists(atPath: raw.path))
     }
 
+    @Test func produceKeepsTheRawRecordingItsErrorNames() async throws {
+        let locked = FileManager.default.temporaryDirectory
+            .appendingPathComponent("locked-\(UUID())", isDirectory: true)
+        try FileManager.default.createDirectory(at: locked, withIntermediateDirectories: true)
+        try FileManager.default.setAttributes([.posixPermissions: 0o500], ofItemAtPath: locked.path)
+        defer {
+            try? FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: locked.path)
+            try? FileManager.default.removeItem(at: locked)
+        }
+        var filmed: URL?
+        let request = RecordingRequest(output: locked.appendingPathComponent("c.mp4"))
+        do {
+            _ = try await RecordingPipeline.produce(request) { raw in
+                try Data("not a movie".utf8).write(to: raw)
+                filmed = raw
+                return RecordingResult(url: raw, duration: 1, bytes: 11)
+            }
+            Issue.record("a missing video was reported as success")
+        } catch {
+            let raw = try #require(filmed)
+            defer { try? FileManager.default.removeItem(at: raw) }
+            #expect("\(error)".contains(raw.path))
+            // The path in the error must still be there to pick up.
+            #expect(FileManager.default.fileExists(atPath: raw.path))
+        }
+    }
+
+    @Test func produceCleansUpWhenFilmingItselfFails() async throws {
+        var filmed: URL?
+        let request = RecordingRequest(output: URL(fileURLWithPath: "/tmp/x.mp4"))
+        await #expect(throws: LoupeError.self) {
+            _ = try await RecordingPipeline.produce(request) { raw in
+                try Data("half".utf8).write(to: raw)
+                filmed = raw
+                throw LoupeError.failed("simctl died")
+            }
+        }
+        let raw = try #require(filmed)
+        #expect(!FileManager.default.fileExists(atPath: raw.path))
+    }
+
     @Test func anUnreadableRecordingStillBecomesAVideoByCopy() async throws {
         // Transcoding garbage fails; the copy fallback keeps it, as before.
         let raw = FileManager.default.temporaryDirectory.appendingPathComponent("raw-\(UUID()).mov")

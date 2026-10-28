@@ -135,17 +135,31 @@ extension Record {
 
                 The recording stops on its own after \(Int(RecordOptions.hardLimit)) seconds \
                 if nothing stops it sooner.
+
+                For an App Store preview give `--appstore` here as well as on `stop`: \
+                here it pins a simulator's status bar to 9:41 while filming and caps the \
+                recording at \(Int(AppStorePreview.maxDuration)) s; there it renders the preview.
                 """)
 
         @OptionGroup var target: TargetOptions
         @OptionGroup var region: RegionFlags
+        // The parent `record` defines `--appstore` too, and ArgumentParser binds a
+        // flag to the first definition on the command stack. Declaring the same
+        // group here is what makes the value land in this command, as with the
+        // target; only `--appstore` means anything before filming has begun.
+        @OptionGroup var output: OutputFlags
 
         func run() async throws {
             let parsed = try target.parsed()
+            guard output.out == nil, !output.gif else {
+                throw ValidationError("--out and --gif belong on `record \(parsed) stop`, which writes the files.")
+            }
+            let appstore = output.appstore
             let driver = try Record.session(parsed)
             try await driver.prepare()
-            var options = RecordOptions()
+            var options = RecordOptions(maxDuration: appstore ? AppStorePreview.maxDuration : RecordOptions.hardLimit)
             options.region = try region.parsed()
+            options.pinStatusBar = appstore
             _ = try await driver.startRecording(
                 to: RecordingPipeline.scratchURL("loupe-session", "mov"), options: options)
             print("recording \(parsed) — stop with `loupe record \(parsed) stop`")
@@ -164,7 +178,15 @@ extension Record {
             let parsed = try target.parsed()
             let driver = try Record.session(parsed)
             let request = try output.request(for: parsed)
-            let recording = try await driver.stopRecording()
+            var recording = try await driver.stopRecording()
+            // Whether the status bar was pinned was decided at `start`; a preview
+            // with a live clock in it should at least say so.
+            if output.appstore, try Loupe.recordingSurface(of: parsed) == .sim,
+                !recording.notes.contains(RecordOptions.statusBarPinnedNote) {
+                recording.notes.append(
+                    "appstore: the status bar was NOT pinned (the clock and battery are live) — "
+                        + "give `--appstore` to `record \(parsed) start` as well")
+            }
             output.report(try await RecordingPipeline.encode(recording, as: request))
         }
     }

@@ -40,10 +40,12 @@ extension LiveSession {
         var frame: Frame?
         var element: String?
         var padding: Double?
+        var pinStatusBar: Bool?
 
         init(url: URL, options: RecordOptions) {
             self.url = url.path
             maxDuration = options.maxDuration
+            pinStatusBar = options.pinStatusBar
             switch options.region {
                 case .frame(let frame): self.frame = frame
                 case .element(let needle, let padding):
@@ -55,6 +57,7 @@ extension LiveSession {
 
         var options: RecordOptions {
             var options = RecordOptions(maxDuration: maxDuration)
+            options.pinStatusBar = pinStatusBar ?? false
             if let frame {
                 options.region = .frame(frame)
             } else if let element {

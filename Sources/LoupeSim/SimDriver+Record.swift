@@ -6,8 +6,21 @@ extension SimDriver: RecordingDriver {
         -> any RecordingHandle {
         let ready = try await ensureReady()
         try? FileManager.default.removeItem(at: url)
-        let recording = try await SimRecording.start(device: ready.device, url: url)
-        return recording
+        // Pinned here, in the driver, so every way of recording — one-shot,
+        // MCP, or a session's `record start` — shows the same status bar and
+        // puts the live one back when the handle stops. An override someone
+        // set on purpose is left alone.
+        let pin = options.pinStatusBar ? await !hasStatusBarOverride(ready.device) : false
+        if pin { try await setStatusBar() }
+        do {
+            return try await SimRecording.start(device: ready.device, url: url, pinnedStatusBar: pin) { [weak self] in
+                guard pin else { return }
+                _ = try? await self?.clearStatusBar()
+            }
+        } catch {
+            if pin { _ = try? await clearStatusBar() }
+            throw error
+        }
     }
 }
 
@@ -25,6 +38,10 @@ final class SimRecording: RecordingHandle, @unchecked Sendable {
     private let exited = DispatchSemaphore(value: 0)
     private let stopped = Locked(false)
     private let deviceName: String
+    /// Runs once the child has exited, however the stop went: undoes what
+    /// `startRecording` set up for the film, such as a pinned status bar.
+    private let cleanup: @Sendable () async -> Void
+    private let pinnedStatusBar: Bool
 
     private static let queue = DispatchQueue(
         label: "com.cocoanetics.loupe.simctl.record", qos: .userInitiated, attributes: .concurrent)
@@ -32,13 +49,22 @@ final class SimRecording: RecordingHandle, @unchecked Sendable {
     /// Longest simctl gets to write the file after SIGINT.
     private static let finalizeTimeout: Double = 30
 
-    private init(process: Process, url: URL, deviceName: String) {
+    private init(
+        process: Process, url: URL, deviceName: String, pinned: Bool, cleanup: @escaping @Sendable () async -> Void
+    ) {
         self.process = process
         self.url = url
         self.deviceName = deviceName
+        self.pinnedStatusBar = pinned
+        self.cleanup = cleanup
     }
 
-    static func start(device: SimulatorDevice, url: URL) async throws -> SimRecording {
+    /// - Parameter cleanup: run after the recording ends, whichever way. With a
+    ///   pinned status bar the result also says so.
+    static func start(
+        device: SimulatorDevice, url: URL, pinnedStatusBar: Bool = false,
+        cleanup: @escaping @Sendable () async -> Void = {}
+    ) async throws -> SimRecording {
         let args = ["simctl", "io", device.udid, "recordVideo", "--codec=h264", "--force", "--", url.path]
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/xcrun")
@@ -48,7 +74,8 @@ final class SimRecording: RecordingHandle, @unchecked Sendable {
         process.standardOutput = FileHandle.nullDevice
         process.standardInput = FileHandle.nullDevice
 
-        let recording = SimRecording(process: process, url: url, deviceName: device.name)
+        let recording = SimRecording(
+            process: process, url: url, deviceName: device.name, pinned: pinnedStatusBar, cleanup: cleanup)
         process.terminationHandler = { [exited = recording.exited] _ in exited.signal() }
         do {
             try process.run()
@@ -102,8 +129,21 @@ final class SimRecording: RecordingHandle, @unchecked Sendable {
         let first = stopped.value == false
         stopped.value = true
         guard first else { throw LoupeError.failed("this recording was already stopped") }
-        let duration = Date().timeIntervalSince(startedAt)
+        // The cleanup runs after the child is gone, success or not, and before
+        // the caller gets control back: a status bar restored a moment after the
+        // command exits is one nobody can rely on.
+        let outcome: Result<RecordingResult, any Error>
+        do {
+            outcome = .success(try await finish())
+        } catch {
+            outcome = .failure(error)
+        }
+        await cleanup()
+        return try outcome.get()
+    }
 
+    private func finish() async throws -> RecordingResult {
+        let duration = Date().timeIntervalSince(startedAt)
         if process.isRunning { Foundation.kill(process.processIdentifier, SIGINT) }
         let finished = await withCheckedContinuation { continuation in
             Self.queue.async {
@@ -122,7 +162,9 @@ final class SimRecording: RecordingHandle, @unchecked Sendable {
             throw LoupeError.failed(
                 "simctl exited but wrote no recording of \(deviceName). simctl said: \(diagnostics)")
         }
-        return RecordingResult(url: url, duration: duration, bytes: size)
+        return RecordingResult(
+            url: url, duration: duration, bytes: size,
+            notes: pinnedStatusBar ? [RecordOptions.statusBarPinnedNote] : [])
     }
 
     /// Last resort: the child must not outlive its recording.

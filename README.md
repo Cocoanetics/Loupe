@@ -487,8 +487,10 @@ loupe wait @phone Dashboard
 loupe record @phone stop --out login.mp4 --gif
 ```
 
-The target comes first, as with every verb. `start` takes `--region`/`--element`;
-`stop` takes `--out`, `--gif` and `--appstore`. A recording nobody stops ends on its own at the 120 s limit, and
+The target comes first, as with every verb. `start` takes `--region`/`--element` and
+`--appstore` (pin the status bar, stop at 30 s); `stop` takes `--out`, `--gif` and
+`--appstore` (render the preview). Give `--appstore` to both for an App Store preview;
+`stop` says so in its notes if the status bar was left live. A recording nobody stops ends on its own at the 120 s limit, and
 closing the session finalizes it too.
 
 To record only part of the screen and cut the file size, give `--region x,y,w,h` or
@@ -547,7 +549,8 @@ loupe convert run.mp4 --appstore --appstore-device mac
 - **A silent stereo AAC track** at 256 kbps / 44.1 kHz. Apple's page does not say audio
   is required, but uploads without a track are widely reported to stall in processing.
 - On a simulator the status bar is pinned to 9:41, full battery and signal while
-  filming, and put back afterwards unless it was already pinned.
+  filming, and put back afterwards unless it was already pinned. The simulator driver
+  does this itself, so it holds for one-shot, MCP and session recordings alike.
 
 A recording shows everything on screen, including any secret the app displays. Unlike
 `describe` output, pixels are not redacted.

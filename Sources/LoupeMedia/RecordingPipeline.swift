@@ -65,13 +65,21 @@ public struct RecordingProduct: Sendable {
 public enum RecordingPipeline {
 
     /// Films into a scratch file, then encodes it as `request` asks.
+    ///
+    /// The scratch file is cleaned up here only if filming fails; from then on
+    /// ``encode(_:as:)`` owns it, and keeps it when no video could be written.
     /// - Parameter film: records into the URL it is given and returns the result.
     public static func produce(
         _ request: RecordingRequest, film: (URL) async throws -> RecordingResult
     ) async throws -> RecordingProduct {
         let raw = scratchURL("loupe-raw", "mov")
-        defer { try? FileManager.default.removeItem(at: raw) }
-        let recording = try await film(raw)
+        let recording: RecordingResult
+        do {
+            recording = try await film(raw)
+        } catch {
+            try? FileManager.default.removeItem(at: raw)
+            throw error
+        }
         return try await encode(recording, as: request)
     }
 

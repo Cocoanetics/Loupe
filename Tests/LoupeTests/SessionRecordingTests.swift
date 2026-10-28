@@ -83,9 +83,12 @@ private final class FakeRecorder: RecordingDriver, @unchecked Sendable {
     @Test func recordRequestsAndResultsRoundTripTheWire() throws {
         var options = RecordOptions(maxDuration: 42)
         options.region = .element("Login", padding: 12)
+        options.pinStatusBar = true
         let wire = LiveSession.RecordWire(url: URL(fileURLWithPath: "/tmp/a.mov"), options: options)
         let decoded = try JSONDecoder().decode(LiveSession.RecordWire.self, from: try JSONEncoder().encode(wire))
         #expect(decoded.options.maxDuration == 42)
+        #expect(decoded.options.pinStatusBar)
+        #expect(!RecordOptions.default.pinStatusBar)
         guard case .element(let needle, let padding)? = decoded.options.region else {
             Issue.record("region lost"); return
         }

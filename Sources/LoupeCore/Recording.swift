@@ -9,6 +9,10 @@ public struct RecordOptions: Sendable {
     /// Set only for a driver with ``RecordingDriver/cropsRegionAtSource``: the part
     /// to film, which that driver resolves and crops while capturing.
     public var region: RecordRegion?
+    /// On a simulator, show Apple's 9:41 status bar (full battery and signal)
+    /// while filming and put the live one back when the recording stops — what
+    /// an App Store preview wants. Ignored by drivers without a status bar.
+    public var pinStatusBar = false
 
     public init(maxDuration: TimeInterval = RecordOptions.hardLimit) {
         self.maxDuration = min(max(maxDuration, 0.1), Self.hardLimit)
@@ -16,6 +20,9 @@ public struct RecordOptions: Sendable {
 
     /// Ceiling no caller can raise.
     public static let hardLimit: TimeInterval = 120
+
+    /// The note a recording carries when ``pinStatusBar`` was honoured.
+    public static let statusBarPinnedNote = "status bar pinned to 9:41 while filming, restored afterwards"
 
     public static let `default` = RecordOptions()
 }
