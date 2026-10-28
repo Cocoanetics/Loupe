@@ -53,4 +53,48 @@ struct LoupeToolsTests {
             _ = try LoupeHost.configured(environment: ["LOUPE_HOST": "/tmp/host.sock"])
         }
     }
+
+    @Test func tokenGoesOutAsBearerHeader() throws {
+        let direct = try LoupeHost.configured(
+            environment: ["LOUPE_HOST": "http://127.0.0.1:9000/mcp", "LOUPE_HOST_TOKEN": " abc123\n"])
+        #expect(direct?.headers == ["Authorization": "Bearer abc123"])
+
+        let file = FileManager.default.temporaryDirectory.appendingPathComponent("loupe-token-\(UUID())")
+        try "from-file\n".write(to: file, atomically: true, encoding: .utf8)
+        defer { try? FileManager.default.removeItem(at: file) }
+        let viaFile = try LoupeHost.configured(
+            environment: ["LOUPE_HOST": "https://mc.example/mcp", "LOUPE_HOST_TOKEN_FILE": file.path])
+        #expect(viaFile?.headers == ["Authorization": "Bearer from-file"])
+
+        // The variable wins over the file.
+        let both = try LoupeHost.configured(
+            environment: [
+                "LOUPE_HOST": "https://mc.example/mcp", "LOUPE_HOST_TOKEN": "env",
+                "LOUPE_HOST_TOKEN_FILE": file.path,
+            ])
+        #expect(both?.headers["Authorization"] == "Bearer env")
+
+        let none = try LoupeHost.configured(environment: ["LOUPE_HOST": "https://mc.example/mcp"])
+        #expect(none?.headers.isEmpty == true)
+        #expect(throws: (any Error).self) {
+            _ = try LoupeHost.configured(
+                environment: ["LOUPE_HOST": "https://mc.example/mcp", "LOUPE_HOST_TOKEN_FILE": "/nope/x"])
+        }
+    }
+
+    @Test func secretsOnlyTravelToLoopbackOrHTTPS() throws {
+        func allows(_ url: String) -> Bool {
+            LoupeHost(url: URL(string: url)!).allowsSecrets
+        }
+        #expect(allows("http://127.0.0.1:9000/mcp"))
+        #expect(allows("http://localhost:9000/mcp"))
+        #expect(allows("http://[::1]:9000/mcp"))
+        #expect(allows("https://mc.example/mcp"))
+        #expect(!allows("http://mc.example/mcp"))
+        #expect(!allows("http://192.168.1.5:9000/mcp"))
+        #expect(!allows("http://127.0.0.1.evil.example/mcp"))
+
+        #expect(LoupeHost.carriesSecrets(["loupe", "set", "pw", "{{PASSWORD}}"]))
+        #expect(!LoupeHost.carriesSecrets(["loupe", "press", "Save"]))
+    }
 }

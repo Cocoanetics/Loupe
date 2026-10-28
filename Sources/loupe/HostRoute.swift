@@ -25,7 +25,12 @@ enum HostRoute {
     /// With a host configured, refuse a command that has no forwarding rather than
     /// let it drive the UI here.
     static func check(_ command: ParsableCommand) throws {
-        guard try LoupeHost.configured() != nil else { return }
+        guard let host = try LoupeHost.configured() else { return }
+        if LoupeHost.carriesSecrets(CommandLine.arguments), !host.allowsSecrets {
+            throw LoupeError.failed(
+                "refusing to send {{ENV}} values to \(host.url.absoluteString): expanded secrets "
+                    + "may only go to a loopback host or an https:// one")
+        }
         switch command {
             case is MCPCommand, is Capture, is Describe, is Act, is List, is Doctor, is any VerbCommand:
                 return

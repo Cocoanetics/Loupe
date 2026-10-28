@@ -203,6 +203,32 @@ loupe describe --session login       # this one call goes to @login
 Precedence is most-specific-wins: an explicit target, then `--session`, then the
 remembered one.
 
+## Relaying to a host
+
+A host process — for example the MissionControl daemon — can hold the Screen
+Recording and Accessibility grants and run Loupe's tools for you. Point the CLI
+at its MCP endpoint and `loupe <verb>` and `loupe mcp` forward there instead of
+driving the UI in-process. Unset, nothing changes.
+
+| Variable | Meaning |
+| --- | --- |
+| `LOUPE_HOST` | The host's MCP URL, `http://` or `https://`. Anything else is an error. |
+| `LOUPE_HOST_PREFIX` | Prefix the host put on Loupe's tool names (default none). |
+| `LOUPE_HOST_TOKEN` | Bearer token, sent as `Authorization: Bearer …` on every request. Never logged. |
+| `LOUPE_HOST_TOKEN_FILE` | Path to a file holding the token, used when `LOUPE_HOST_TOKEN` is unset. |
+
+**Can be relayed:** `capture`, `describe`, `act`, `list`, `doctor`, the single-step
+verbs `press`, `set`, `type`, `key`, `open` (and `mcp`, which relays the tool
+traffic as-is). Images come back downscaled, as they do over MCP.
+
+**Cannot be relayed** (they fail with an error rather than run locally): `use`,
+`at`, `session`, `sessions`, `script`, `before`, `after`, `compare`, `sim`,
+`window`, `reveal`, `wait`, and `capture --annotate`.
+
+**Secrets:** `{{ENV}}` values are expanded on this machine and sent to the host,
+so they are only sent to a loopback host or over `https://`. With a non-loopback
+`http://` host, any command that uses `{{…}}` is refused.
+
 ## What each surface can do
 
 |  | web | mac | simulator |

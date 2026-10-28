@@ -14,10 +14,36 @@ public struct LoupeHost: Sendable {
     public let url: URL
     /// What the host put in front of Loupe's tool names (`LOUPE_HOST_PREFIX`).
     public let toolPrefix: String
+    /// Bearer token the host requires, if any. Never printed or logged.
+    private let token: String?
 
-    public init(url: URL, toolPrefix: String = "") {
+    public init(url: URL, toolPrefix: String = "", token: String? = nil) {
         self.url = url
         self.toolPrefix = toolPrefix
+        self.token = token
+    }
+
+    /// Headers sent with every relayed request.
+    public var headers: [String: String] {
+        token.map { ["Authorization": "Bearer \($0)"] } ?? [:]
+    }
+
+    /// Whether the host is this machine, where plain HTTP does not cross a network.
+    public var isLoopback: Bool {
+        guard let host = url.host?.lowercased() else { return false }
+        return host == "localhost" || host == "::1" || host == "127.0.0.1"
+            || host.hasPrefix("127.") && host.split(separator: ".").count == 4
+    }
+
+    /// Secrets may travel to a loopback host or over HTTPS, never in clear text
+    /// across a network.
+    public var allowsSecrets: Bool {
+        url.scheme?.lowercased() == "https" || isLoopback
+    }
+
+    /// Whether any argument asks for `{{ENV}}` expansion, i.e. will carry a secret.
+    public static func carriesSecrets(_ arguments: [String]) -> Bool {
+        arguments.contains { $0.contains("{{") }
     }
 
     /// The host named by the environment, `nil` when running standalone.
@@ -33,7 +59,28 @@ public struct LoupeHost: Sendable {
             throw LoupeError.failed(
                 "LOUPE_HOST must be the host's MCP URL (http:// or https://), got '\(raw)'")
         }
-        return LoupeHost(url: url, toolPrefix: environment["LOUPE_HOST_PREFIX"] ?? "")
+        return LoupeHost(
+            url: url, toolPrefix: environment["LOUPE_HOST_PREFIX"] ?? "",
+            token: try token(environment))
+    }
+}
+
+extension LoupeHost {
+    /// `LOUPE_HOST_TOKEN`, else the contents of the file `LOUPE_HOST_TOKEN_FILE`
+    /// names. Error text names the file, never the token.
+    static func token(_ environment: [String: String]) throws -> String? {
+        if let direct = environment["LOUPE_HOST_TOKEN"]?.trimmingCharacters(in: .whitespacesAndNewlines),
+            !direct.isEmpty
+        {
+            return direct
+        }
+        guard let path = environment["LOUPE_HOST_TOKEN_FILE"], !path.isEmpty else { return nil }
+        let url = URL(fileURLWithPath: (path as NSString).expandingTildeInPath)
+        guard let text = try? String(contentsOf: url, encoding: .utf8) else {
+            throw LoupeError.failed("cannot read LOUPE_HOST_TOKEN_FILE at \(url.path)")
+        }
+        let token = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        return token.isEmpty ? nil : token
     }
 }
 
@@ -51,7 +98,7 @@ public actor LoupeHostClient {
 
     public init(host: LoupeHost) {
         self.host = host
-        self.proxy = MCPServerProxy(config: .sse(config: MCPServerSseConfig(url: host.url)))
+        self.proxy = MCPServerProxy(config: .sse(config: MCPServerSseConfig(url: host.url, headers: host.headers)))
     }
 
     private func ensureConnected() async throws {
