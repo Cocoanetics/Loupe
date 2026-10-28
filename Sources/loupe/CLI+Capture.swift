@@ -13,6 +13,7 @@ struct Capture: AsyncParsableCommand {
     @OptionGroup var actions: ActionFlags
 
     func run() async throws {
+        if let client = try HostRoute.client() { return try await runOnHost(client) }
         let parsed = try target.parsed()
         let pending = try actions.actions()
         let shot: LoupeCore.Capture
@@ -80,6 +81,7 @@ struct Describe: AsyncParsableCommand {
     var json = false
 
     func run() async throws {
+        if let client = try HostRoute.client() { return try await runOnHost(client) }
         let nodes = try await Loupe.describe(
             try target.parsed(),
             options: target.options(),
@@ -114,6 +116,7 @@ struct Act: AsyncParsableCommand {
     var out: String?
 
     func run() async throws {
+        if let client = try HostRoute.client() { return try await runOnHost(client) }
         let pending = try actions.actions()
         guard !pending.isEmpty else {
             throw ValidationError("No actions given. See `loupe act --help`.")

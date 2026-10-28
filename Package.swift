@@ -7,6 +7,7 @@ let package = Package(
 	products: [
 		.executable(name: "loupe", targets: ["loupe"]),
 		.library(name: "LoupeKit", targets: ["LoupeKit"]),
+		.library(name: "LoupeMCP", targets: ["LoupeMCP"]),
 		.library(name: "LoupeXCUI", targets: ["LoupeXCUI"]),
 	],
 	dependencies: [

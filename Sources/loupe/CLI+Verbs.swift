@@ -24,6 +24,7 @@ protocol VerbCommand: AsyncParsableCommand {
 
 extension VerbCommand {
     func runVerb() async throws {
+        if let client = try HostRoute.client() { return try await runVerbOnHost(client) }
         // Most specific wins: an explicit target, then --session, then whatever
         // `loupe use` remembered.
         let named = targetName ?? sessionName.map { "@\($0)" }
