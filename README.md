@@ -449,7 +449,11 @@ loupe record sim:booted --out run.mp4                    # no actions: runs unti
 ```
 
 MP4 (H.264) is the primary format: GitHub and GitLab take it as an attachment, and
-it is what social media and App Store previews want. Every recording is bounded
+X requires it. It is re-encoded for screen content after recording: H.264 High profile,
+variable frame rate (a sample is written only when the screen changed, so a still
+screen costs nothing), native resolution with no downscaling, and quality 0.85 so UI
+text stays sharp. HEVC and AV1 have screen-content tools but no VideoToolbox encoder
+or broad playback; HEVC is only on the table for a later App Store preset. Every recording is bounded
 (120 s at most) and stopped with SIGINT so simctl finalizes the file; Loupe stops its
 `simctl` child on every exit path, except if Loupe itself is `kill -9`'d.
 

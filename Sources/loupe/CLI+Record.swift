@@ -80,10 +80,14 @@ struct Record: AsyncParsableCommand {
             gifURL = wantsGIF ? videoURL.deletingPathExtension().appendingPathExtension("gif") : nil
         }
         defer { if gifOnly { try? FileManager.default.removeItem(at: videoURL) } }
+        // simctl's own encode is tuned for motion; it is re-encoded for a screen below.
+        let rawURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("loupe-raw-\(UUID().uuidString).mov")
+        defer { try? FileManager.default.removeItem(at: rawURL) }
 
         let task = Task {
             try await Loupe.record(
-                parsed, to: videoURL, options: target.options(), actions: pending, stop: stop)
+                parsed, to: rawURL, options: target.options(), actions: pending, stop: stop)
         }
         // Ctrl-C finalizes the recording instead of killing it mid-write.
         signal(SIGINT, SIG_IGN)
@@ -93,6 +97,19 @@ struct Record: AsyncParsableCommand {
         let result = try await task.value
         interrupt.cancel()
 
+        do {
+            let transcoded = try await ScreenContentTranscoder.transcode(from: rawURL, to: videoURL)
+            FileHandle.standardError.write(
+                Data(
+                    "h264: \(transcoded.writtenFrames) of \(transcoded.sourceFrames) frames written (variable frame rate)\n"
+                        .utf8))
+        } catch {
+            // Never lose a recording to a tuning step: keep simctl's own file.
+            try? FileManager.default.removeItem(at: videoURL)
+            try FileManager.default.copyItem(at: rawURL, to: videoURL)
+            FileHandle.standardError.write(
+                Data("note: could not optimize the video (\(error.localizedDescription)); kept the original encode\n".utf8))
+        }
         if !gifOnly { print(videoURL.path) }
         FileHandle.standardError.write(
             Data(

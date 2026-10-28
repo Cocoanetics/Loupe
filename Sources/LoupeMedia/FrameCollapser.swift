@@ -23,6 +23,28 @@ public struct HeldFrame: @unchecked Sendable {
     }
 }
 
+/// Decides, frame by frame, whether the screen changed. Shared by the GIF path and
+/// the MP4 transcode, so both mean the same by "unchanged".
+///
+/// Compares against the last *kept* frame, not the previous one: a slow fade
+/// changes every step by less than the threshold and would otherwise be
+/// discarded in full.
+struct FrameChangeDetector {
+    var threshold: Double
+    private var last: [UInt8]?
+
+    init(threshold: Double) { self.threshold = threshold }
+
+    /// True for the first frame and for any frame that differs enough from the
+    /// last one that returned true.
+    mutating func isChange(_ image: CGImage) -> Bool {
+        let signature = FrameCollapser.signature(of: image)
+        if let last, FrameCollapser.difference(last, signature) < threshold { return false }
+        last = signature
+        return true
+    }
+}
+
 /// Folds runs of unchanged frames into one frame held for the combined time, so
 /// a ten second clip with half a second of motion becomes a handful of frames.
 public enum FrameCollapser {
@@ -41,16 +63,10 @@ public enum FrameCollapser {
     public static func collapse(
         _ frames: [TimedFrame], endTime: TimeInterval, threshold: Double
     ) -> [HeldFrame] {
-        var kept: [(image: CGImage, start: TimeInterval, signature: [UInt8])] = []
-        for frame in frames {
-            let signature = Self.signature(of: frame.image)
-            // Against the last *kept* frame, not the previous one: a slow fade
-            // changes every step by less than the threshold and would otherwise
-            // be discarded in full.
-            if let last = kept.last, difference(last.signature, signature) < threshold {
-                continue
-            }
-            kept.append((frame.image, frame.time, signature))
+        var kept: [(image: CGImage, start: TimeInterval)] = []
+        var detector = FrameChangeDetector(threshold: threshold)
+        for frame in frames where detector.isChange(frame.image) {
+            kept.append((frame.image, frame.time))
         }
         var held: [HeldFrame] = []
         for (index, frame) in kept.enumerated() {
