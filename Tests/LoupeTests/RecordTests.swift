@@ -266,12 +266,15 @@ private final class FakeRecorder: RecordingDriver, @unchecked Sendable {
 /// A Mac-surface driver that records, as `MacDriver` now does.
 private final class FakeMac: RecordingDriver, @unchecked Sendable {
     let targetDescription = "mac:Fake"
+    let cropsRegionAtSource = true
     var started: URL?
+    var options: RecordOptions?
     func capture(_ options: CaptureOptions) async throws -> Capture { throw LoupeError.unsupported("fake") }
     func describe(_ options: DescribeOptions) async throws -> [UINode] { [] }
     func perform(_ action: UIAction) async throws -> ActionResult { ActionResult(message: "ok") }
     func startRecording(to url: URL, options: RecordOptions) async throws -> any RecordingHandle {
         started = url
+        self.options = options
         return FakeMacHandle(url: url)
     }
 }
@@ -340,12 +343,58 @@ private struct FakeMacHandle: RecordingHandle {
         #expect(result.url == url)
     }
 
-    @Test func regionsAreRefusedForMacWindows() async throws {
-        let target = try Target.parse("mac:Fake")
-        await #expect(throws: LoupeError.self) {
-            _ = try await Loupe.record(
-                target, to: URL(fileURLWithPath: "/tmp/x.mp4"),
-                region: .frame(Frame(x: 0, y: 0, width: 10, height: 10)), stop: .after(0.1))
+    @Test func globalFramesBecomeWindowRelative() {
+        let relative = WindowRegion.relative(
+            global: Frame(x: 150, y: 260, width: 80, height: 40),
+            toWindowAt: CGRect(x: 100, y: 200, width: 800, height: 600))
+        #expect(relative == Frame(x: 50, y: 60, width: 80, height: 40))
+    }
+
+    @Test func sourceRectFollowsTheBackingScale() throws {
+        let content = CGSize(width: 800, height: 600)
+        let retina = try WindowRegion.source(
+            Frame(x: 50, y: 60, width: 80, height: 40), contentSize: content, scale: 2)
+        #expect(retina.rect == CGRect(x: 50, y: 60, width: 80, height: 40))
+        #expect(retina.pixelWidth == 160 && retina.pixelHeight == 80)
+        let standard = try WindowRegion.source(
+            Frame(x: 50, y: 60, width: 80, height: 40), contentSize: content, scale: 1)
+        #expect(standard.pixelWidth == 80 && standard.pixelHeight == 40)
+        // Odd sizes snap outward to even pixels.
+        let odd = try WindowRegion.source(
+            Frame(x: 11, y: 11, width: 31, height: 31), contentSize: content, scale: 1)
+        #expect(odd.pixelWidth % 2 == 0 && odd.pixelHeight % 2 == 0)
+        #expect(odd.rect.contains(CGRect(x: 11, y: 11, width: 31, height: 31)))
+    }
+
+    @Test func regionsOutsideTheWindowAreRefused() {
+        let content = CGSize(width: 800, height: 600)
+        #expect(throws: LoupeError.self) {
+            _ = try WindowRegion.source(
+                Frame(x: 700, y: 500, width: 300, height: 300), contentSize: content, scale: 2)
         }
+        #expect(throws: LoupeError.self) {
+            _ = try WindowRegion.source(
+                Frame(x: 0, y: 0, width: 0, height: 10), contentSize: content, scale: 2)
+        }
+    }
+
+    @Test func macRegionTravelsToTheDriverInsteadOfBeingCroppedAfterwards() async throws {
+        let recorder = FakeMac()
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("mac-\(UUID()).mp4")
+        let frame = Frame(x: 1, y: 2, width: 30, height: 40)
+        let result = try await Loupe.recordSession(
+            on: recorder,
+            Loupe.Session(url: url, record: .default, region: .frame(frame), actions: [], stop: .after(0.05)))
+        guard case .frame(let seen)? = recorder.options?.region else {
+            Issue.record("the driver did not receive the region")
+            return
+        }
+        #expect(seen == frame)
+        // Already cropped at the source, so nothing is left for the CLI to crop.
+        #expect(result.region == nil)
+    }
+
+    @Test func macDriverCropsAtTheSource() {
+        #expect(MacDriver(appLocator: "Fake").cropsRegionAtSource)
     }
 }

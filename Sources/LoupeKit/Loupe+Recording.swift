@@ -31,12 +31,6 @@ extension Loupe {
             throw LoupeError.unsupported(
                 "recording works on sim: and mac: targets for now — web: is not implemented yet")
         }
-        // A window's frames are in global screen points but the movie holds only the
-        // window, so a crop region would need translating first.
-        if target.surface == .mac, region != nil {
-            throw LoupeError.unsupported(
-                "--region and --element are not supported for mac: windows yet; the recording is of the whole window")
-        }
         return try await withDriver(target, options: options) { driver in
             try await recordSession(
                 on: driver,
@@ -57,11 +51,19 @@ extension Loupe {
     /// and the closing wait gets only what is left.
     static func recordSession(on driver: any UIDriver, _ session: Session) async throws
         -> RecordingResult {
-        let (url, record, region, actions, stop) =
-            (session.url, session.record, session.region, session.actions, session.stop)
+        let (url, actions, stop) = (session.url, session.actions, session.stop)
+        var recordOptions = session.record
+        var region = session.region
         guard let recorder = driver as? any RecordingDriver else {
             throw LoupeError.unsupported("\(driver.targetDescription) cannot be recorded")
         }
+        // A driver that crops while filming gets the region itself and resolves it
+        // against its own coordinate space (a window, for mac:).
+        if recorder.cropsRegionAtSource {
+            recordOptions.region = region
+            region = nil
+        }
+        let record = recordOptions
         // Resolved before filming, so a bad region fails in a second rather
         // than after the recording it would have thrown away.
         var crop: (region: Frame, scale: Double)?

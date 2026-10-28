@@ -38,7 +38,43 @@ struct RecordingSize: Equatable, Sendable {
     }
 }
 
+/// Turning a region of the window into what ScreenCaptureKit films.
+///
+/// Regions are **window-relative points, top-left origin**, as `capture --region`
+/// documents them. An element's frame arrives in global screen points and is
+/// moved into the window first.
+enum WindowRegion {
+    struct Source {
+        var rect: CGRect
+        var pixelWidth: Int
+        var pixelHeight: Int
+    }
+
+    /// A global-screen-points frame, relative to the window's top-left corner.
+    static func relative(global frame: Frame, toWindowAt window: CGRect) -> Frame {
+        Frame(
+            x: frame.x - window.origin.x, y: frame.y - window.origin.y,
+            width: frame.width, height: frame.height)
+    }
+
+    /// The `SCStreamConfiguration.sourceRect` (points, inside the window content)
+    /// and the output size in pixels. The pixel size is the region times the
+    /// backing scale, snapped outward to even numbers for H.264. Throws when the
+    /// region is empty or reaches outside the window.
+    static func source(_ region: Frame, contentSize: CGSize, scale: Double) throws -> Source {
+        let pixels = try RecordCrop.pixelRect(
+            region, scale: scale, pixelWidth: Int((contentSize.width * scale).rounded()),
+            pixelHeight: Int((contentSize.height * scale).rounded()))
+        let rect = CGRect(
+            x: pixels.minX / scale, y: pixels.minY / scale,
+            width: pixels.width / scale, height: pixels.height / scale)
+        return Source(rect: rect, pixelWidth: Int(pixels.width), pixelHeight: Int(pixels.height))
+    }
+}
+
 extension MacDriver: RecordingDriver {
+    nonisolated public var cropsRegionAtSource: Bool { true }
+
     public func startRecording(to url: URL, options: RecordOptions) async throws
         -> any RecordingHandle {
         try requireResolved()
@@ -46,9 +82,33 @@ extension MacDriver: RecordingDriver {
         guard let window = windowElement, let application = runningApplication else {
             throw LoupeError.targetNotFound(appLocator)
         }
+        var region: Frame?
+        switch options.region {
+            case .frame(let frame):
+                region = frame
+            case .element(let needle, let padding):
+                let node = try await resolve(needle)
+                guard let frame = node.frame, !frame.isEmpty, let windowFrame = AXAPI.frame(window) else {
+                    throw LoupeError.failed("'\(needle)' has no frame to record")
+                }
+                let inWindow = WindowRegion.relative(
+                    global: RecordCrop.padded(frame, by: padding),
+                    toWindowAt: CGRect(
+                        x: windowFrame.x, y: windowFrame.y, width: windowFrame.width,
+                        height: windowFrame.height))
+                // Padding may reach past the window edge; the element itself is what was asked for.
+                guard let kept = RecordCrop.clamped(
+                    inWindow, toWidth: windowFrame.width, height: windowFrame.height)
+                else {
+                    throw LoupeError.failed("'\(needle)' lies outside the window")
+                }
+                region = kept
+            case nil:
+                break
+        }
         try? FileManager.default.removeItem(at: url)
         return try await WindowRecording.start(
-            captureTarget(for: window, of: application), to: url)
+            captureTarget(for: window, of: application), to: url, region: region)
     }
 }
 
@@ -93,7 +153,7 @@ final class WindowRecording: NSObject, RecordingHandle, SCStreamOutput, SCStream
         return body(&current)
     }
 
-    static func start(_ target: CaptureTarget, to url: URL) async throws -> WindowRecording {
+    static func start(_ target: CaptureTarget, to url: URL, region: Frame?) async throws -> WindowRecording {
         let window = try await WindowCapture.locate(target)
         let filter = SCContentFilter(desktopIndependentWindow: window)
         let scale = Double(filter.pointPixelScale)
@@ -101,6 +161,14 @@ final class WindowRecording: NSObject, RecordingHandle, SCStreamOutput, SCStream
         let configuration = SCStreamConfiguration()
         configuration.width = Int((filter.contentRect.width * scale).rounded())
         configuration.height = Int((filter.contentRect.height * scale).rounded())
+        if let region {
+            // Fixed relative to the window's top-left; if the window is resized later,
+            // ScreenCaptureKit clips it and the size lock fits what arrives.
+            let source = try WindowRegion.source(region, contentSize: filter.contentRect.size, scale: scale)
+            configuration.sourceRect = source.rect
+            configuration.width = source.pixelWidth
+            configuration.height = source.pixelHeight
+        }
         configuration.showsCursor = false
         configuration.captureResolution = .best
         configuration.ignoreShadowsSingleWindow = true

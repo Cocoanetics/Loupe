@@ -6,6 +6,9 @@ public struct RecordOptions: Sendable {
     /// The longest a recording may run, whatever else was asked for. A recording
     /// that is never stopped fills a disk, so every way of ending one is bounded.
     public var maxDuration: TimeInterval
+    /// Set only for a driver with ``RecordingDriver/cropsRegionAtSource``: the part
+    /// to film, which that driver resolves and crops while capturing.
+    public var region: RecordRegion?
 
     public init(maxDuration: TimeInterval = RecordOptions.hardLimit) {
         self.maxDuration = min(max(maxDuration, 0.1), Self.hardLimit)
@@ -48,6 +51,14 @@ public protocol RecordingHandle: Sendable {
 /// its five verbs: only drivers that can film their surface conform.
 public protocol RecordingDriver: UIDriver {
     func startRecording(to url: URL, options: RecordOptions) async throws -> any RecordingHandle
+
+    /// True when the driver crops while filming and resolves `options.region`
+    /// itself, instead of leaving the crop to the caller after the fact.
+    var cropsRegionAtSource: Bool { get }
+}
+
+extension RecordingDriver {
+    public var cropsRegionAtSource: Bool { false }
 }
 
 /// The `10s`, `500ms`, `2m` spelling of a duration. A bare number is seconds.
