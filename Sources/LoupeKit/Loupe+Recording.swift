@@ -55,7 +55,8 @@ extension Loupe {
         }
         return try await withDriver(target, options: options) { driver in
             let session = Session(url: url, record: record, region: region, actions: actions, stop: stop)
-            guard pinStatusBar, let sim = driver as? SimDriver, try await sim.isStatusBarOverridden() == false
+            guard pinStatusBar, let sim = try statusBarSimulator(for: target, driver: driver),
+                try await sim.isStatusBarOverridden() == false
             else {
                 return try await recordSession(on: driver, session)
             }
@@ -69,6 +70,24 @@ extension Loupe {
                 throw error
             }
         }
+    }
+
+    /// The surface a recording of `target` ends up on: a session's is the one it
+    /// was opened on. What `--appstore` needs to default a Mac window to the Mac
+    /// preset.
+    public static func recordingSurface(of target: Target) throws -> Surface {
+        try LiveSession.underlyingTarget(of: target).surface
+    }
+
+    /// The simulator whose status bar a recording of `target` would show, or
+    /// nil for anything that is not one. Through a session the driver is a
+    /// `LiveSessionDriver`, so the simulator is reached by name instead:
+    /// `status_bar` is plain simctl and needs no shared state with the session.
+    private static func statusBarSimulator(for target: Target, driver: any UIDriver) throws -> SimDriver? {
+        if let sim = driver as? SimDriver { return sim }
+        let underlying = try LiveSession.underlyingTarget(of: target)
+        guard target.surface == .live, underlying.surface == .sim else { return nil }
+        return SimDriver(deviceLocator: underlying.locator)
     }
 
     struct Session {

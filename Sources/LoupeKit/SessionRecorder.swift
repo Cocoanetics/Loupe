@@ -20,12 +20,15 @@ actor SessionRecorder {
     private enum State {
         case idle
         case recording(Active)
-        case stopping(Task<RecordingResult, any Error>)
+        /// `claimed` when a `stop` is waiting for it, so the file is spoken for.
+        case stopping(Task<RecordingResult, any Error>, claimed: Bool)
         /// Stopped by the deadline, result waiting for the next `stop`.
         case finished(Result<RecordingResult, any Error>)
     }
 
     private var state: State = .idle
+    /// The file being written, until a `stop` hands it to its caller.
+    private var scratch: URL?
 
     var isRecording: Bool {
         if case .idle = state { return false }
@@ -56,6 +59,7 @@ actor SessionRecorder {
             await self?.expire(limit: limit)
         }
         state = .recording(Active(handle: handle, crop: crop, watchdog: watchdog))
+        scratch = url
     }
 
     /// Stops the recording and hands back what was filmed, once.
@@ -64,29 +68,48 @@ actor SessionRecorder {
             case .idle:
                 throw LoupeError.failed("no recording is in progress on this session — `record start` first")
             case .recording(let active):
-                let task = finalize(active)
-                let outcome = await task.result
-                state = .idle
-                return try outcome.get()
-            case .stopping(let task):
-                let outcome = await task.result
-                state = .idle
-                return try outcome.get()
+                let task = finalize(active, claimed: true)
+                return try await handOver(task.result)
+            case .stopping(let task, _):
+                state = .stopping(task, claimed: true)
+                return try await handOver(task.result)
             case .finished(let outcome):
-                state = .idle
-                return try outcome.get()
+                return try handOver(outcome)
         }
     }
 
-    /// Stops a recording that is still running and keeps nothing: for a session
-    /// going away, when no one will ask for the result.
-    func abandon() async {
-        guard case .recording(let active) = state else { return }
-        _ = await finalize(active).result
+    /// The file now belongs to the caller: forget it here.
+    private func handOver(_ outcome: Result<RecordingResult, any Error>) throws -> RecordingResult {
         state = .idle
+        scratch = nil
+        return try outcome.get()
     }
 
-    private func finalize(_ active: Active) -> Task<RecordingResult, any Error> {
+    /// Ends whatever is in flight and keeps nothing: for a session going away,
+    /// when no one will ask for the result. Waits for a stop that is already
+    /// under way, so the session does not exit mid-write, and deletes the file
+    /// unless a `stop` is about to hand it to its caller.
+    func abandon() async {
+        switch state {
+            case .idle:
+                return
+            case .recording(let active):
+                _ = await finalize(active, claimed: false).result
+            case .stopping(let task, _):
+                _ = await task.result
+            case .finished:
+                break
+        }
+        // A `stop` that was waiting on the same task has taken the file.
+        guard case .stopping(_, claimed: true) = state else {
+            state = .idle
+            if let scratch { try? FileManager.default.removeItem(at: scratch) }
+            scratch = nil
+            return
+        }
+    }
+
+    private func finalize(_ active: Active, claimed: Bool) -> Task<RecordingResult, any Error> {
         active.watchdog?.cancel()
         let task = Task {
             var result = try await active.handle.stop()
@@ -96,19 +119,19 @@ actor SessionRecorder {
             }
             return result
         }
-        state = .stopping(task)
+        state = .stopping(task, claimed: claimed)
         return task
     }
 
     private func expire(limit: TimeInterval) async {
         guard case .recording(let active) = state else { return }
-        let task = finalize(active)
+        let task = finalize(active, claimed: false)
         var outcome = await task.result
         if case .success(var result) = outcome {
             result.notes.append("stopped at the \(Int(limit))s limit before `record stop` was called")
             outcome = .success(result)
         }
         // A `stop` that was waiting on the same task has already taken over.
-        if case .stopping = state { state = .finished(outcome) }
+        if case .stopping(_, claimed: false) = state { state = .finished(outcome) }
     }
 }

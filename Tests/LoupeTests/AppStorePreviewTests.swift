@@ -139,3 +139,42 @@ private final class FrameQueue: @unchecked Sendable {
         lock.withLock { remaining.isEmpty ? nil : remaining.removeFirst() }
     }
 }
+
+@Suite struct RecordingPipelineTests {
+    @Test func theRawRecordingIsKeptWhenNoVideoCanBeWritten() async throws {
+        let raw = FileManager.default.temporaryDirectory.appendingPathComponent("raw-\(UUID()).mov")
+        try Data("not a movie".utf8).write(to: raw)
+        defer { try? FileManager.default.removeItem(at: raw) }
+        // A directory nothing can be written into, so the fallback copy fails too.
+        let locked = FileManager.default.temporaryDirectory
+            .appendingPathComponent("locked-\(UUID())", isDirectory: true)
+        try FileManager.default.createDirectory(at: locked, withIntermediateDirectories: true)
+        try FileManager.default.setAttributes([.posixPermissions: 0o500], ofItemAtPath: locked.path)
+        defer {
+            try? FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: locked.path)
+            try? FileManager.default.removeItem(at: locked)
+        }
+        let recording = RecordingResult(url: raw, duration: 1, bytes: 11)
+        let request = RecordingRequest(output: locked.appendingPathComponent("clip.mp4"))
+        do {
+            _ = try await RecordingPipeline.encode(recording, as: request)
+            Issue.record("a missing video was reported as success")
+        } catch {
+            #expect("\(error)".contains(raw.path))
+        }
+        #expect(FileManager.default.fileExists(atPath: raw.path))
+    }
+
+    @Test func anUnreadableRecordingStillBecomesAVideoByCopy() async throws {
+        // Transcoding garbage fails; the copy fallback keeps it, as before.
+        let raw = FileManager.default.temporaryDirectory.appendingPathComponent("raw-\(UUID()).mov")
+        try Data("not a movie".utf8).write(to: raw)
+        let out = FileManager.default.temporaryDirectory.appendingPathComponent("copy-\(UUID()).mp4")
+        defer { try? FileManager.default.removeItem(at: out) }
+        let product = try await RecordingPipeline.encode(
+            RecordingResult(url: raw, duration: 1, bytes: 11), as: RecordingRequest(output: out))
+        #expect(product.bytes == 11)
+        #expect(product.notes.contains { $0.contains("kept the original") })
+        #expect(!FileManager.default.fileExists(atPath: raw.path))
+    }
+}

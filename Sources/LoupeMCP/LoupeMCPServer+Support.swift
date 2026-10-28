@@ -284,6 +284,11 @@ extension LoupeMCPServer {
         var maxWidth: Int?
         var appStore: Bool
         var appStoreDevice: String?
+        var tail: String?
+        var timeout: Double?
+        var padding: Double?
+        var threshold: Double?
+        var loop: Bool?
 
         /// When the recording ends. An agent has no Ctrl-C, so a call that names
         /// no end at all is refused rather than left to run to the limit.
@@ -291,9 +296,9 @@ extension LoupeMCPServer {
             if duration != nil, until != nil {
                 throw LoupeError.failed("`duration` and `until` are alternatives — give one")
             }
-            if let until { return .until(until, timeout: 30) }
+            if let until { return .until(until, timeout: timeout ?? 30) }
             if let duration { return .after(try DurationSpec.parse(duration)) }
-            if hasActions { return .after(0.5) }
+            if hasActions { return .after(try DurationSpec.parse(tail ?? "500ms")) }
             throw LoupeError.failed(
                 "say when to stop: `duration` (e.g. \"5s\"), `until` (an element to wait for), "
                     + "or at least one action to film")
@@ -304,7 +309,7 @@ extension LoupeMCPServer {
                 throw LoupeError.failed("`region` and `element` are alternatives — give one")
             }
             if let region { return .frame(try RecordCrop.parse(region)) }
-            if let element { return .element(element, padding: 8) }
+            if let element { return .element(element, padding: padding ?? 8) }
             return nil
         }
 
@@ -338,7 +343,10 @@ extension LoupeMCPServer {
             let wantsGIF = gif || output.pathExtension.lowercased() == "gif"
             return RecordingRequest(
                 output: output,
-                gif: wantsGIF ? GIFOptions(fps: fps ?? 10, maxWidth: maxWidth ?? 800) : nil,
+                gif: wantsGIF
+                    ? GIFOptions(
+                        fps: fps ?? 10, maxWidth: maxWidth ?? 800, threshold: threshold ?? 0.002, loop: loop ?? true)
+                    : nil,
                 appStore: appStore, family: try family())
         }
     }

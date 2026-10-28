@@ -228,15 +228,11 @@ extension Record {
     /// prints are on the host's disk, which for a loopback host is this one.
     func runOnHost(_ client: LoupeHostClient, target parsed: Target) async throws {
         var arguments = HostRoute.targetArguments(parsed, target.options())
-        // One tool call carries one step of each kind, in the order `loupe_act`
-        // runs them; anything more needs the local command.
-        for action in try actions.actions() {
-            for (key, value) in try HostRoute.actArguments(action) {
-                guard arguments[key] == nil else {
-                    throw HostRoute.unsupported("several `\(key)` steps in one recording")
-                }
-                arguments[key] = value
-            }
+        // As an ordered step list, so `--set … --press …` fills the form before
+        // submitting it on the host exactly as it does here.
+        let pending = try actions.actions()
+        if !pending.isEmpty {
+            arguments["steps"] = .array(pending.map { .string($0.step) })
         }
         for (key, value) in hostOptions() { arguments[key] = value }
         let reply = try await client.call("loupe_record", arguments)
@@ -251,10 +247,13 @@ extension Record {
         report.notes.forEach(OutputFlags.note)
     }
 
-    /// The flags that are not steps, as `loupe_record` spells them.
+    /// The flags that are not steps, as `loupe_record` spells them. Every one
+    /// is forwarded, so the host records what this command line asked for.
     private func hostOptions() -> JSONDictionary {
         var out: JSONDictionary = [
-            "fps": .double(output.gifFlags.fps), "maxWidth": .integer(output.gifFlags.maxWidth)
+            "fps": .double(output.gifFlags.fps), "maxWidth": .integer(output.gifFlags.maxWidth),
+            "threshold": .double(output.gifFlags.threshold), "loop": .bool(!output.gifFlags.noLoop),
+            "tail": .string(tail), "timeout": .double(timeout), "padding": .double(region.padding)
         ]
         if let duration { out["duration"] = .string(duration) }
         if let until { out["until"] = .string(until) }

@@ -65,8 +65,7 @@ struct Record: AsyncParsableCommand {
         let pending = try actions.actions()
         let stop = try plan(hasActions: !pending.isEmpty)
         let kept = try region.parsed()
-        var request = try output.request(defaultName: Out.timestampedName(parsed.locator, ext: "mp4"))
-        if request.family == nil, request.appStore, parsed.surface == .mac { request.family = .mac }
+        let request = try output.request(for: parsed)
         let limit = output.appstore ? AppStorePreview.maxDuration : RecordOptions.hardLimit
         let product = try await RecordingPipeline.produce(request) { raw in
             try await film(
@@ -164,7 +163,7 @@ extension Record {
         func run() async throws {
             let parsed = try target.parsed()
             let driver = try Record.session(parsed)
-            let request = try output.request(defaultName: Out.timestampedName(parsed.locator, ext: "mp4"))
+            let request = try output.request(for: parsed)
             let recording = try await driver.stopRecording()
             output.report(try await RecordingPipeline.encode(recording, as: request))
         }
@@ -286,15 +285,18 @@ struct OutputFlags: ParsableArguments {
         help: "Device class for --appstore: iphone, ipad or mac. Default: mac for mac: targets, else by shape.")
     var appstoreDevice: AppStorePreview.Family?
 
-    func request(defaultName: String) throws -> RecordingRequest {
-        let output = URL(fileURLWithPath: out ?? defaultName)
+    /// The files to make for a recording of `target`. A Mac window — directly
+    /// or through a session opened on one — defaults the App Store preset to Mac.
+    func request(for target: Target) throws -> RecordingRequest {
+        let output = URL(fileURLWithPath: out ?? Out.timestampedName(target.locator, ext: "mp4"))
         let gifOnly = output.pathExtension.lowercased() == "gif"
         if appstore, gifOnly {
             throw ValidationError("--appstore makes a video; give `--out` an .mp4 name (add --gif for a GIF too).")
         }
+        var family = appstoreDevice
+        if family == nil, appstore, try Loupe.recordingSurface(of: target) == .mac { family = .mac }
         return RecordingRequest(
-            output: output, gif: (gif || gifOnly) ? gifFlags.options : nil, appStore: appstore,
-            family: appstoreDevice)
+            output: output, gif: (gif || gifOnly) ? gifFlags.options : nil, appStore: appstore, family: family)
     }
 
     /// Paths on stdout, everything else on stderr, as `capture` does.

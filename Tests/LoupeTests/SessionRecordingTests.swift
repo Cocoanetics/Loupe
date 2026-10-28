@@ -118,3 +118,75 @@ private final class NotARecorder: UIDriver, @unchecked Sendable {
     func describe(_ options: DescribeOptions) async throws -> [UINode] { [] }
     func perform(_ action: UIAction) async throws -> ActionResult { ActionResult(message: "ok") }
 }
+
+@Suite struct SessionRecordingCleanupTests {
+    private func scratch() throws -> URL {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("session-\(UUID()).mov")
+        try Data("frames".utf8).write(to: url)
+        return url
+    }
+
+    @Test func abandonDeletesWhatNobodyWillCollect() async throws {
+        let recorder = SessionRecorder()
+        let driver = FakeRecorder(actionDuration: 0)
+        let url = try scratch()
+        try await recorder.start(on: driver, url: url, options: .default)
+        await recorder.abandon()
+        #expect(driver.stopCount == 1)
+        #expect(!FileManager.default.fileExists(atPath: url.path))
+    }
+
+    @Test func abandonAlsoClearsAResultTheLimitLeftBehind() async throws {
+        let recorder = SessionRecorder()
+        let driver = FakeRecorder(actionDuration: 0)
+        let url = try scratch()
+        try await recorder.start(on: driver, url: url, options: RecordOptions(maxDuration: 0.2))
+        try await Task.sleep(for: .milliseconds(600))
+        await recorder.abandon()
+        #expect(!FileManager.default.fileExists(atPath: url.path))
+        await #expect(throws: LoupeError.self) { _ = try await recorder.stop() }
+    }
+
+    @Test func stopHandsTheFileToItsCaller() async throws {
+        let recorder = SessionRecorder()
+        let driver = FakeRecorder(actionDuration: 0)
+        let url = try scratch()
+        defer { try? FileManager.default.removeItem(at: url) }
+        try await recorder.start(on: driver, url: url, options: .default)
+        _ = try await recorder.stop()
+        await recorder.abandon()
+        #expect(FileManager.default.fileExists(atPath: url.path))
+    }
+
+    @Test func aSessionResolvesToTheTargetItWasOpenedOn() throws {
+        let name = "mac-\(UUID().uuidString.prefix(8))"
+        try LiveSession.save(
+            LiveSession.Descriptor(
+                name: name, target: "mac:Finder", port: 1, token: "t",
+                pid: ProcessInfo.processInfo.processIdentifier))
+        defer { LiveSession.remove(name) }
+        #expect(try Loupe.recordingSurface(of: Target.parse("@\(name)")) == .mac)
+        #expect(try Loupe.recordingSurface(of: Target.parse("sim:booted")) == .sim)
+        #expect(throws: LoupeError.self) { try Loupe.recordingSurface(of: Target.parse("@no-such-session")) }
+    }
+
+    @Test func stepsRoundTripThroughTheirSpelling() throws {
+        let actions: [UIAction] = [
+            .setValue(node: "Email", value: "a=b@c.d"), .press(node: "Log In"), .scrollTo(node: "Footer"),
+            .click(x: 0.5, y: 0.25, space: .normalized, viaCursor: false),
+            .click(x: 10, y: 20, space: .screenPoints, viaCursor: true),
+            .type("hi there"), .key("cmd+s"), .scroll(dx: 0, dy: -400), .navigate("myapp://x"),
+            .evaluate("1+1"), .launch("com.example.app"), .terminate("com.example.app"),
+            .settle(timeout: 2), .waitFor(nodes: ["A", "B"], failIf: ["Bad"], gone: false, timeout: 7),
+            .waitFor(nodes: ["Spinner"], failIf: [], gone: true, timeout: 3)
+        ]
+        let back = try actions.map { try UIAction.parse(step: $0.step) }
+        #expect(back.map(\.step) == actions.map(\.step))
+        // The spelling is the one a person would type, so a host sees nothing odd.
+        #expect(actions[0].step == "set:Email=a=b@c.d")
+        #expect(actions[3].step == "click:n:0.5,0.25")
+        #expect(actions[13].step == "await:A|B|!Bad@7.0")
+        guard case .click(_, _, let space, let viaCursor) = back[4] else { Issue.record("not a click"); return }
+        #expect(space == .screenPoints && viaCursor)
+    }
+}

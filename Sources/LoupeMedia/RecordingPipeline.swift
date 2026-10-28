@@ -76,12 +76,31 @@ public enum RecordingPipeline {
     }
 
     /// Turns a finished raw recording into the deliverables. The raw file is
-    /// consumed: it is deleted on the way out, whatever happened.
+    /// consumed once a video exists; if none could be written it is kept, and
+    /// the error says where, because it is the only copy of what was filmed.
     public static func encode(
         _ recording: RecordingResult, as request: RecordingRequest
     ) async throws -> RecordingProduct {
         let raw = recording.url
-        defer { try? FileManager.default.removeItem(at: raw) }
+        do {
+            let product = try await deliver(recording, as: request)
+            try? FileManager.default.removeItem(at: raw)
+            return product
+        } catch {
+            guard let video = request.videoURL, size(of: video) == 0 else {
+                try? FileManager.default.removeItem(at: raw)
+                throw error
+            }
+            try? FileManager.default.removeItem(at: video)
+            throw LoupeError.failed(
+                "\(error.localizedDescription) — the raw recording was kept at \(raw.path)")
+        }
+    }
+
+    private static func deliver(
+        _ recording: RecordingResult, as request: RecordingRequest
+    ) async throws -> RecordingProduct {
+        let raw = recording.url
         var notes = recording.notes
         let crop = recording.region.flatMap { frame in
             recording.scale.map { ScreenCrop(region: frame, scale: $0) }
@@ -96,7 +115,7 @@ public enum RecordingPipeline {
                 from: raw, to: video, crop: crop, family: request.family)
             notes += done.notes
         } else {
-            notes += await transcode(raw, to: video, crop: crop)
+            notes += try await transcode(raw, to: video, crop: crop)
         }
         let videoBytes = size(of: video)
         notes.append(
@@ -122,8 +141,9 @@ public enum RecordingPipeline {
     }
 
     /// The screen-tuned H.264 pass, falling back to the recorder's own file: a
-    /// recording is never lost to a tuning step.
-    private static func transcode(_ raw: URL, to video: URL, crop: ScreenCrop?) async -> [String] {
+    /// recording is never lost to a tuning step. If even the copy fails there
+    /// is no video, and that is an error, not a note.
+    private static func transcode(_ raw: URL, to video: URL, crop: ScreenCrop?) async throws -> [String] {
         do {
             let done = try await ScreenContentTranscoder.transcode(from: raw, to: video, crop: crop)
             return ["h264: \(done.writtenFrames) of \(done.sourceFrames) frames written (variable frame rate)"]
@@ -133,10 +153,9 @@ public enum RecordingPipeline {
             do {
                 try FileManager.default.copyItem(at: raw, to: video)
             } catch let copyError {
-                return [
-                    "note: could not optimize the video (\(reason)) nor keep the original: "
-                        + copyError.localizedDescription
-                ]
+                throw MediaError.encodeFailed(
+                    "could not optimize the video (\(reason)) nor copy the original to "
+                        + "\(video.path): \(copyError.localizedDescription)")
             }
             let uncropped = crop == nil ? "" : ", NOT cropped"
             return ["note: could not optimize the video (\(reason)); kept the original encode\(uncropped)"]
