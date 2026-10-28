@@ -69,88 +69,95 @@ struct Record: AsyncParsableCommand {
     func run() async throws {
         let parsed = try target.parsed()
         let pending = try actions.actions()
+        let (kept, stop) = try plan(hasActions: !pending.isEmpty)
+
+        let gifOnly = out?.lowercased().hasSuffix(".gif") == true
+        let requested = out ?? Out.timestampedName(parsed.locator, ext: "mp4")
+        let videoURL = gifOnly ? Self.scratchURL("loupe-record", "mp4") : URL(fileURLWithPath: requested)
+        // `--out run.gif` says what is wanted; the flag is not needed too.
+        var gifURL: URL?
+        if gifOnly {
+            gifURL = URL(fileURLWithPath: requested)
+        } else if gif {
+            gifURL = videoURL.deletingPathExtension().appendingPathExtension("gif")
+        }
+        defer { if gifOnly { try? FileManager.default.removeItem(at: videoURL) } }
+        // simctl's own encode is tuned for motion; it is re-encoded for a screen below.
+        let rawURL = Self.scratchURL("loupe-raw", "mov")
+        defer { try? FileManager.default.removeItem(at: rawURL) }
+
+        let result = try await film(parsed, to: rawURL, region: kept, actions: pending, stop: stop)
+        let crop = result.region.flatMap { frame in result.scale.map { ScreenCrop(region: frame, scale: $0) } }
+        try await encode(rawURL, to: videoURL, crop: crop)
+
+        if !gifOnly { print(videoURL.path) }
+        let size = ByteCountFormatter.string(fromByteCount: Int64(result.bytes), countStyle: .file)
+        note(String(format: "recorded %.1fs, %@", result.duration, size))
+        if let gifURL {
+            try await GIFFlags.convert(videoURL, to: gifURL, flags: gifFlags)
+        }
+    }
+
+    private static func scratchURL(_ prefix: String, _ ext: String) -> URL {
+        FileManager.default.temporaryDirectory.appendingPathComponent("\(prefix)-\(UUID().uuidString).\(ext)")
+    }
+
+    private func note(_ text: String) {
+        FileHandle.standardError.write(Data((text + "\n").utf8))
+    }
+
+    /// Validates the flags and works out what to keep and when to stop.
+    private func plan(hasActions: Bool) throws -> (RecordRegion?, RecordStop) {
         if duration != nil, until != nil {
             throw ValidationError("--duration and --until are alternatives; give one.")
         }
         if region != nil, element != nil {
             throw ValidationError("--region and --element are alternatives; give one.")
         }
-        let kept: RecordRegion?
+        var kept: RecordRegion?
         if let region {
             kept = .frame(try RecordCrop.parse(region))
         } else if let element {
             kept = .element(element, padding: padding)
-        } else {
-            kept = nil
         }
-        let stop: RecordStop
         if let until {
             let (nodes, failures) = WaitCommand.split(until)
-            stop = .until(nodes: nodes, failIf: failures, timeout: timeout)
-        } else if let duration {
-            stop = .after(try DurationSpec.parse(duration))
-        } else if !pending.isEmpty {
-            stop = .after(try DurationSpec.parse(tail))
-        } else {
-            stop = .cancelled
+            return (kept, .until(nodes: nodes, failIf: failures, timeout: timeout))
         }
+        if let duration { return (kept, .after(try DurationSpec.parse(duration))) }
+        if hasActions { return (kept, .after(try DurationSpec.parse(tail))) }
+        return (kept, .cancelled)
+    }
 
-        let gifOnly = out?.lowercased().hasSuffix(".gif") == true
-        // `--out run.gif` says what is wanted; the flag is not needed too.
-        let wantsGIF = gif || gifOnly
-        let requested = out ?? Out.timestampedName(parsed.locator, ext: "mp4")
-        let videoURL: URL
-        let gifURL: URL?
-        if gifOnly {
-            videoURL = FileManager.default.temporaryDirectory
-                .appendingPathComponent("loupe-record-\(UUID().uuidString).mp4")
-            gifURL = URL(fileURLWithPath: requested)
-        } else {
-            videoURL = URL(fileURLWithPath: requested)
-            gifURL = wantsGIF ? videoURL.deletingPathExtension().appendingPathExtension("gif") : nil
-        }
-        defer { if gifOnly { try? FileManager.default.removeItem(at: videoURL) } }
-        // simctl's own encode is tuned for motion; it is re-encoded for a screen below.
-        let rawURL = FileManager.default.temporaryDirectory
-            .appendingPathComponent("loupe-raw-\(UUID().uuidString).mov")
-        defer { try? FileManager.default.removeItem(at: rawURL) }
-
+    /// Runs the recording, with Ctrl-C finalizing it instead of killing it mid-write.
+    private func film(
+        _ parsed: Target, to url: URL, region: RecordRegion?, actions: [UIAction], stop: RecordStop
+    ) async throws -> RecordingResult {
+        let options = target.options()
         let task = Task {
             try await Loupe.record(
-                parsed, to: rawURL, options: target.options(), region: kept, actions: pending, stop: stop)
+                parsed, to: url, options: options, region: region, actions: actions, stop: stop)
         }
-        // Ctrl-C finalizes the recording instead of killing it mid-write.
         signal(SIGINT, SIG_IGN)
         let interrupt = DispatchSource.makeSignalSource(signal: SIGINT, queue: .global())
         interrupt.setEventHandler { task.cancel() }
         interrupt.resume()
-        let result = try await task.value
-        interrupt.cancel()
-        let crop = result.region.flatMap { frame in result.scale.map { ScreenCrop(region: frame, scale: $0) } }
+        defer { interrupt.cancel() }
+        return try await task.value
+    }
 
+    private func encode(_ raw: URL, to video: URL, crop: ScreenCrop?) async throws {
         do {
-            let transcoded = try await ScreenContentTranscoder.transcode(from: rawURL, to: videoURL, crop: crop)
-            FileHandle.standardError.write(
-                Data(
-                    "h264: \(transcoded.writtenFrames) of \(transcoded.sourceFrames) frames written (variable frame rate)\n"
-                        .utf8))
+            let done = try await ScreenContentTranscoder.transcode(from: raw, to: video, crop: crop)
+            note("h264: \(done.writtenFrames) of \(done.sourceFrames) frames written (variable frame rate)")
         } catch {
             // Never lose a recording to a tuning step: keep simctl's own file.
-            try? FileManager.default.removeItem(at: videoURL)
-            try FileManager.default.copyItem(at: rawURL, to: videoURL)
-            FileHandle.standardError.write(
-                Data("note: could not optimize the video (\(error.localizedDescription)); kept the original encode\(crop == nil ? "" : ", NOT cropped")\n".utf8))
-        }
-        if !gifOnly { print(videoURL.path) }
-        FileHandle.standardError.write(
-            Data(
-                String(
-                    format: "recorded %.1fs, %@\n", result.duration,
-                    ByteCountFormatter.string(fromByteCount: Int64(result.bytes), countStyle: .file)
-                ).utf8))
-        if let gifURL {
-            try await GIFFlags.convert(
-                videoURL, to: gifURL, flags: gifFlags)
+            try? FileManager.default.removeItem(at: video)
+            try FileManager.default.copyItem(at: raw, to: video)
+            let uncropped = crop == nil ? "" : ", NOT cropped"
+            note(
+                "note: could not optimize the video (\(error.localizedDescription)); "
+                    + "kept the original encode\(uncropped)")
         }
     }
 }

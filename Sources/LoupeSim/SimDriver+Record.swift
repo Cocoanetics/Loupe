@@ -62,7 +62,7 @@ final class SimRecording: RecordingHandle, @unchecked Sendable {
         queue.async {
             // Line by line, so "Recording started" is seen while simctl keeps running.
             while case let chunk = errHandle.availableData, !chunk.isEmpty {
-                captured.value += String(decoding: chunk, as: UTF8.self)
+                captured.value += String(bytes: chunk, encoding: .utf8) ?? ""
             }
         }
 

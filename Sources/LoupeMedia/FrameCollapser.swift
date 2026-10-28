@@ -63,15 +63,15 @@ public enum FrameCollapser {
     public static func collapse(
         _ frames: [TimedFrame], endTime: TimeInterval, threshold: Double
     ) -> [HeldFrame] {
-        var kept: [(image: CGImage, start: TimeInterval)] = []
+        var kept: [TimedFrame] = []
         var detector = FrameChangeDetector(threshold: threshold)
         for frame in frames where detector.isChange(frame.image) {
-            kept.append((frame.image, frame.time))
+            kept.append(frame)
         }
         var held: [HeldFrame] = []
         for (index, frame) in kept.enumerated() {
-            let next = index + 1 < kept.count ? kept[index + 1].start : endTime
-            let delay = min(max(next - frame.start, minDelay), maxDelay)
+            let next = index + 1 < kept.count ? kept[index + 1].time : endTime
+            let delay = min(max(next - frame.time, minDelay), maxDelay)
             held.append(HeldFrame(image: frame.image, delay: delay))
         }
         return held
@@ -99,10 +99,10 @@ public enum FrameCollapser {
 
     /// Mean absolute difference, 0...1. Thumbnails of different size count as
     /// entirely different.
-    static func difference(_ a: [UInt8], _ b: [UInt8]) -> Double {
-        guard a.count == b.count, !a.isEmpty else { return 1 }
+    static func difference(_ first: [UInt8], _ second: [UInt8]) -> Double {
+        guard first.count == second.count, !first.isEmpty else { return 1 }
         var total = 0
-        for index in a.indices { total += abs(Int(a[index]) - Int(b[index])) }
-        return Double(total) / Double(a.count * 255)
+        for index in first.indices { total += abs(Int(first[index]) - Int(second[index])) }
+        return Double(total) / Double(first.count * 255)
     }
 }

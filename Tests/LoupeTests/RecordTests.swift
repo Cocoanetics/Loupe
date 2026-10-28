@@ -114,7 +114,7 @@ import Testing
     @Test func regionsOutsideTheScreenAreRejected() {
         for region in [
             Frame(x: 300, y: 0, width: 200, height: 50), Frame(x: -20, y: 0, width: 50, height: 50),
-            Frame(x: 0, y: 800, width: 50, height: 100), Frame(x: 0, y: 0, width: 0, height: 10),
+            Frame(x: 0, y: 800, width: 50, height: 100), Frame(x: 0, y: 0, width: 0, height: 10)
         ] {
             #expect(throws: LoupeError.self) {
                 try RecordCrop.pixelRect(region, scale: 3, pixelWidth: 1170, pixelHeight: 2532)

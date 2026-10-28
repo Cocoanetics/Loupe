@@ -39,10 +39,79 @@ public enum ScreenContentTranscoder {
 
     public static let quality = 0.85
 
+    /// Reader and writer, wired up and started.
+    private struct Pipeline {
+        var reader: AVAssetReader
+        var output: AVAssetReaderTrackOutput
+        var writer: AVAssetWriter
+        var input: AVAssetWriterInput
+        var adaptor: AVAssetWriterInputPixelBufferAdaptor
+        var rect: CGRect
+        var duration: CMTime
+    }
+
     public static func transcode(
         from source: URL, to destination: URL, crop: ScreenCrop? = nil,
         threshold: Double = defaultThreshold
     ) async throws -> TranscodeResult {
+        let pipeline = try await makePipeline(from: source, to: destination, crop: crop)
+        var detector = FrameChangeDetector(threshold: threshold)
+        var sourceFrames = 0
+        var written = 0
+        var lastKept: (pixels: CVPixelBuffer, time: CMTime)?
+        while let sample = pipeline.output.copyNextSampleBuffer() {
+            guard let full = CMSampleBufferGetImageBuffer(sample) else { continue }
+            sourceFrames += 1
+            let pixels = crop == nil
+                ? full : try cropped(full, to: pipeline.rect, pool: pipeline.adaptor.pixelBufferPool)
+            var image: CGImage?
+            VTCreateCGImageFromCVPixelBuffer(pixels, options: nil, imageOut: &image)
+            // A frame that cannot be inspected is kept, not guessed at.
+            if let image, !detector.isChange(image) { continue }
+            try await waitUntilReady(pipeline)
+            let time = max(CMSampleBufferGetPresentationTimeStamp(sample), .zero)
+            guard pipeline.adaptor.append(pixels, withPresentationTime: time) else { break }
+            written += 1
+            lastKept = (pixels, time)
+        }
+        if pipeline.reader.status == .failed {
+            pipeline.writer.cancelWriting()
+            throw MediaError.unreadable(pipeline.reader.error?.localizedDescription ?? "reading failed")
+        }
+        try await finish(pipeline, repeating: lastKept)
+        guard pipeline.writer.status == .completed, written > 0 else {
+            throw MediaError.encodeFailed(
+                pipeline.writer.error?.localizedDescription ?? "the encoder wrote no frames")
+        }
+        return TranscodeResult(sourceFrames: sourceFrames, writtenFrames: written)
+    }
+
+    private static func waitUntilReady(_ pipeline: Pipeline) async throws {
+        while !pipeline.input.isReadyForMoreMediaData, pipeline.writer.status != .failed {
+            try await Task.sleep(for: .milliseconds(5))
+        }
+    }
+
+    private static func finish(_ pipeline: Pipeline, repeating last: (pixels: CVPixelBuffer, time: CMTime)?)
+        async throws {
+        // The container's duration comes from the last sample, so a screen that
+        // stayed still would otherwise play as a single frame. Repeat the last
+        // picture just before the end; it costs a few bytes and fixes the length
+        // for every player, not only the ones that honour the session end.
+        let tail = CMTimeSubtract(pipeline.duration, CMTime(value: 1, timescale: 30))
+        if let last, CMTimeCompare(tail, last.time) > 0 {
+            try await waitUntilReady(pipeline)
+            _ = pipeline.adaptor.append(last.pixels, withPresentationTime: tail)
+        }
+        pipeline.input.markAsFinished()
+        // Ends the session at the source's end, which is what holds the last
+        // sample for as long as the screen really stayed that way.
+        pipeline.writer.endSession(atSourceTime: pipeline.duration)
+        await pipeline.writer.finishWriting()
+    }
+
+    private static func makePipeline(from source: URL, to destination: URL, crop: ScreenCrop?)
+        async throws -> Pipeline {
         let asset = AVURLAsset(url: source)
         guard let track = try await asset.loadTracks(withMediaType: .video).first else {
             throw MediaError.unreadable("\(source.lastPathComponent) has no video track")
@@ -53,15 +122,11 @@ public enum ScreenContentTranscoder {
         let sourceWidth = Int(size.width.rounded())
         let sourceHeight = Int(size.height.rounded())
         guard sourceWidth > 0, sourceHeight > 0 else { throw MediaError.noFrames }
-        let rect: CGRect
+        var rect = CGRect(x: 0, y: 0, width: sourceWidth, height: sourceHeight)
         if let crop {
             rect = try RecordCrop.pixelRect(
                 crop.region, scale: crop.scale, pixelWidth: sourceWidth, pixelHeight: sourceHeight)
-        } else {
-            rect = CGRect(x: 0, y: 0, width: sourceWidth, height: sourceHeight)
         }
-        let width = Int(rect.width)
-        let height = Int(rect.height)
 
         let reader = try AVAssetReader(asset: asset)
         let output = AVAssetReaderTrackOutput(
@@ -75,27 +140,15 @@ public enum ScreenContentTranscoder {
         try? FileManager.default.removeItem(at: destination)
         let writer = try AVAssetWriter(outputURL: destination, fileType: .mp4)
         let input = AVAssetWriterInput(
-            mediaType: .video,
-            outputSettings: [
-                AVVideoCodecKey: AVVideoCodecType.h264,
-                AVVideoWidthKey: width,
-                AVVideoHeightKey: height,
-                AVVideoCompressionPropertiesKey: [
-                    AVVideoProfileLevelKey: AVVideoProfileLevelH264HighAutoLevel,
-                    AVVideoQualityKey: quality,
-                    // No B-frames: the pictures are sparse, and reordering would
-                    // only complicate the presentation times of a VFR stream.
-                    AVVideoAllowFrameReorderingKey: false,
-                ],
-            ])
+            mediaType: .video, outputSettings: videoSettings(width: Int(rect.width), height: Int(rect.height)))
         input.transform = transform
         input.expectsMediaDataInRealTime = false
         let adaptor = AVAssetWriterInputPixelBufferAdaptor(
             assetWriterInput: input,
             sourcePixelBufferAttributes: [
                 kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA,
-                kCVPixelBufferWidthKey as String: width,
-                kCVPixelBufferHeightKey as String: height,
+                kCVPixelBufferWidthKey as String: Int(rect.width),
+                kCVPixelBufferHeightKey as String: Int(rect.height)
             ])
         guard writer.canAdd(input) else { throw MediaError.encodeFailed("cannot write H.264") }
         writer.add(input)
@@ -107,53 +160,24 @@ public enum ScreenContentTranscoder {
             throw MediaError.encodeFailed(writer.error?.localizedDescription ?? "cannot start writing")
         }
         writer.startSession(atSourceTime: .zero)
+        return Pipeline(
+            reader: reader, output: output, writer: writer, input: input, adaptor: adaptor,
+            rect: rect, duration: duration)
+    }
 
-        var detector = FrameChangeDetector(threshold: threshold)
-        var sourceFrames = 0
-        var written = 0
-        var lastKept: (pixels: CVPixelBuffer, time: CMTime)?
-        while let sample = output.copyNextSampleBuffer() {
-            guard let full = CMSampleBufferGetImageBuffer(sample) else { continue }
-            sourceFrames += 1
-            let pixels = crop == nil ? full : try cropped(full, to: rect, pool: adaptor.pixelBufferPool)
-            var image: CGImage?
-            VTCreateCGImageFromCVPixelBuffer(pixels, options: nil, imageOut: &image)
-            // A frame that cannot be inspected is kept, not guessed at.
-            if let image, !detector.isChange(image) { continue }
-            while !input.isReadyForMoreMediaData {
-                if writer.status == .failed { break }
-                try await Task.sleep(for: .milliseconds(5))
-            }
-            let time = max(CMSampleBufferGetPresentationTimeStamp(sample), .zero)
-            guard adaptor.append(pixels, withPresentationTime: time) else { break }
-            written += 1
-            lastKept = (pixels, time)
-        }
-        if reader.status == .failed {
-            writer.cancelWriting()
-            throw MediaError.unreadable(reader.error?.localizedDescription ?? "reading failed")
-        }
-        // The container's duration comes from the last sample, so a screen that
-        // stayed still would otherwise play as a single frame. Repeat the last
-        // picture just before the end; it costs a few bytes and fixes the length
-        // for every player, not only the ones that honour the session end.
-        let tail = CMTimeSubtract(duration, CMTime(value: 1, timescale: 30))
-        if let lastKept, CMTimeCompare(tail, lastKept.time) > 0 {
-            while !input.isReadyForMoreMediaData, writer.status != .failed {
-                try await Task.sleep(for: .milliseconds(5))
-            }
-            _ = adaptor.append(lastKept.pixels, withPresentationTime: tail)
-        }
-        input.markAsFinished()
-        // Ends the session at the source's end, which is what holds the last
-        // sample for as long as the screen really stayed that way.
-        writer.endSession(atSourceTime: duration)
-        await writer.finishWriting()
-        guard writer.status == .completed, written > 0 else {
-            throw MediaError.encodeFailed(
-                writer.error?.localizedDescription ?? "the encoder wrote no frames")
-        }
-        return TranscodeResult(sourceFrames: sourceFrames, writtenFrames: written)
+    private static func videoSettings(width: Int, height: Int) -> [String: Any] {
+        [
+            AVVideoCodecKey: AVVideoCodecType.h264,
+            AVVideoWidthKey: width,
+            AVVideoHeightKey: height,
+            AVVideoCompressionPropertiesKey: [
+                AVVideoProfileLevelKey: AVVideoProfileLevelH264HighAutoLevel,
+                AVVideoQualityKey: quality,
+                // No B-frames: the pictures are sparse, and reordering would
+                // only complicate the presentation times of a VFR stream.
+                AVVideoAllowFrameReorderingKey: false
+            ]
+        ]
     }
 }
 
@@ -177,7 +201,7 @@ extension ScreenContentTranscoder {
             CVPixelBufferUnlockBaseAddress(source, .readOnly)
         }
         guard let from = CVPixelBufferGetBaseAddress(source),
-            let to = CVPixelBufferGetBaseAddress(target)
+            let destination = CVPixelBufferGetBaseAddress(target)
         else { throw MediaError.encodeFailed("could not map a frame") }
         let fromStride = CVPixelBufferGetBytesPerRow(source)
         let toStride = CVPixelBufferGetBytesPerRow(target)
@@ -185,7 +209,7 @@ extension ScreenContentTranscoder {
         let originY = Int(rect.minY)
         for row in 0..<height {
             memcpy(
-                to + row * toStride, from + (originY + row) * fromStride + originX * 4, width * 4)
+                destination + row * toStride, from + (originY + row) * fromStride + originX * 4, width * 4)
         }
         return target
     }

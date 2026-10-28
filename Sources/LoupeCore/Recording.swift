@@ -110,12 +110,12 @@ public enum RecordCrop {
     /// `frame` limited to a screen of `width`×`height` points, or nil when they
     /// do not overlap.
     public static func clamped(_ frame: Frame, toWidth width: Double, height: Double) -> Frame? {
-        let x0 = max(frame.x, 0)
-        let y0 = max(frame.y, 0)
-        let x1 = min(frame.x + frame.width, width)
-        let y1 = min(frame.y + frame.height, height)
-        guard x1 > x0, y1 > y0 else { return nil }
-        return Frame(x: x0, y: y0, width: x1 - x0, height: y1 - y0)
+        let left = max(frame.x, 0)
+        let top = max(frame.y, 0)
+        let right = min(frame.x + frame.width, width)
+        let bottom = min(frame.y + frame.height, height)
+        guard right > left, bottom > top else { return nil }
+        return Frame(x: left, y: top, width: right - left, height: bottom - top)
     }
 
     /// The pixel rectangle to keep from a `pixelWidth`×`pixelHeight` video.
@@ -147,13 +147,13 @@ public enum RecordCrop {
         }
         let maxX = pixelWidth - pixelWidth % 2
         let maxY = pixelHeight - pixelHeight % 2
-        let x0 = max(0, Int((region.x * scale / 2).rounded(.down)) * 2)
-        let y0 = max(0, Int((region.y * scale / 2).rounded(.down)) * 2)
-        let x1 = min(maxX, Int(((region.x + region.width) * scale / 2).rounded(.up)) * 2)
-        let y1 = min(maxY, Int(((region.y + region.height) * scale / 2).rounded(.up)) * 2)
-        guard x1 - x0 >= 2, y1 - y0 >= 2 else {
+        let left = max(0, Int((region.x * scale / 2).rounded(.down)) * 2)
+        let top = max(0, Int((region.y * scale / 2).rounded(.down)) * 2)
+        let right = min(maxX, Int(((region.x + region.width) * scale / 2).rounded(.up)) * 2)
+        let bottom = min(maxY, Int(((region.y + region.height) * scale / 2).rounded(.up)) * 2)
+        guard right - left >= 2, bottom - top >= 2 else {
             throw LoupeError.failed("record region is smaller than one pixel")
         }
-        return CGRect(x: x0, y: y0, width: x1 - x0, height: y1 - y0)
+        return CGRect(x: left, y: top, width: right - left, height: bottom - top)
     }
 }

@@ -25,7 +25,7 @@ public enum GIFEncoder {
             let properties = [
                 kCGImagePropertyGIFDictionary: [
                     kCGImagePropertyGIFDelayTime: frame.delay,
-                    kCGImagePropertyGIFUnclampedDelayTime: frame.delay,
+                    kCGImagePropertyGIFUnclampedDelayTime: frame.delay
                 ]
             ]
             CGImageDestinationAddImage(destination, frame.image, properties as CFDictionary)
