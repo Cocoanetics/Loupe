@@ -143,7 +143,12 @@ struct Record: AsyncParsableCommand {
         interrupt.setEventHandler { task.cancel() }
         interrupt.resume()
         defer { interrupt.cancel() }
-        return try await task.value
+        do {
+            return try await task.value
+        } catch is CancellationError {
+            // Ctrl-C before filming began: nothing was recorded, and simctl is gone.
+            throw LoupeError.failed("interrupted before the recording started")
+        }
     }
 
     private func encode(_ raw: URL, to video: URL, crop: ScreenCrop?) async throws {

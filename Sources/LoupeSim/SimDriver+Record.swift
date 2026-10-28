@@ -68,20 +68,29 @@ final class SimRecording: RecordingHandle, @unchecked Sendable {
 
         // Frames before simctl says it is recording are lost, and an early
         // SIGINT would finalize nothing. Wait for the announcement.
-        let deadline = Date().addingTimeInterval(20)
-        while !captured.value.contains("Recording started") {
-            if process.isRunning == false {
-                throw LoupeError.failed(
-                    "simctl stopped before recording \(device.name): \(recording.diagnostics)")
+        // Any way out of the wait other than success — a timeout, simctl dying,
+        // the task being cancelled — must not leave the child recording.
+        do {
+            try await recording.waitForStart(timeout: 20, deviceName: device.name)
+        } catch {
+            recording.kill()
+            throw error
+        }
+        return recording
+    }
+
+    private func waitForStart(timeout: Double, deviceName: String) async throws {
+        let deadline = Date().addingTimeInterval(timeout)
+        while !stderr.value.contains("Recording started") {
+            if !process.isRunning {
+                throw LoupeError.failed("simctl stopped before recording \(deviceName): \(diagnostics)")
             }
             if Date() > deadline {
-                recording.kill()
                 throw LoupeError.timeout(
-                    "simctl did not start recording \(device.name) within 20s: \(recording.diagnostics)")
+                    "simctl did not start recording \(deviceName) within \(Int(timeout))s: \(diagnostics)")
             }
             try await Task.sleep(for: .milliseconds(50))
         }
-        return recording
     }
 
     private var diagnostics: String {
