@@ -82,6 +82,13 @@ extension MacDriver: RecordingDriver {
         guard let window = windowElement, let application = runningApplication else {
             throw LoupeError.targetNotFound(appLocator)
         }
+        // ScreenCaptureKit pauses a window stream while the window is minimized, so
+        // no frame would ever arrive. Say so now rather than after the recording.
+        if AXAPI.bool(window, kAXMinimizedAttribute) == true {
+            throw LoupeError.failed(
+                "\(resolvedDescription) is minimized, and macOS delivers no video of a minimized window. "
+                    + "Restore it (an occluded or other-Space window is fine) and record again.")
+        }
         var region: Frame?
         switch options.region {
             case .frame(let frame):
@@ -131,19 +138,19 @@ final class WindowRecording: NSObject, RecordingHandle, SCStreamOutput, SCStream
         var resized = false
         var failure: String?
         var stopped = false
+        var closed = false
     }
 
     private let url: URL
-    private let stream: SCStream
+    private(set) var stream: SCStream!
     private let startedAt = Date()
     private let state = NSLock()
     private var current = State()
     private let queue = DispatchQueue(label: "com.cocoanetics.loupe.window.record", qos: .userInitiated)
     private let context = CIContext()
 
-    private init(url: URL, stream: SCStream) {
+    private init(url: URL) {
         self.url = url
-        self.stream = stream
         super.init()
     }
 
@@ -177,8 +184,9 @@ final class WindowRecording: NSObject, RecordingHandle, SCStreamOutput, SCStream
         configuration.minimumFrameInterval = CMTime(value: 1, timescale: 30)
         configuration.queueDepth = 6
 
-        let stream = SCStream(filter: filter, configuration: configuration, delegate: nil)
-        let recording = WindowRecording(url: url, stream: stream)
+        let recording = WindowRecording(url: url)
+        let stream = SCStream(filter: filter, configuration: configuration, delegate: recording)
+        recording.stream = stream
         do {
             try stream.addStreamOutput(recording, type: .screen, sampleHandlerQueue: recording.queue)
             try await stream.startCapture()
@@ -210,7 +218,7 @@ final class WindowRecording: NSObject, RecordingHandle, SCStreamOutput, SCStream
         let height = CVPixelBufferGetHeight(pixels)
 
         withState { state in
-            guard !state.stopped, state.failure == nil else { return }
+            guard !state.closed, state.failure == nil else { return }
             if state.writer == nil {
                 guard let size = RecordingSize(firstFrameWidth: width, height: height) else { return }
                 do {
@@ -314,6 +322,7 @@ final class WindowRecording: NSObject, RecordingHandle, SCStreamOutput, SCStream
         // Let any buffer already in flight land before the writer is closed.
         await withCheckedContinuation { continuation in queue.async { continuation.resume() } }
 
+        withState { $0.closed = true }
         let (writer, input, frames, resized, failure, opened, last) = withState {
             ($0.writer, $0.input, $0.frames, $0.resized, $0.failure, $0.firstTime, $0.lastTime)
         }
