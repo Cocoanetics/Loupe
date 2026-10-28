@@ -188,6 +188,12 @@ struct WaitCommand: VerbCommand {
     @Option(help: "Capture afterwards and write the PNG here.") var out: String?
 
     func action() throws -> UIAction {
+        let (nodes, failures) = Self.split(expected)
+        return .waitFor(nodes: nodes, failIf: failures, gone: gone, timeout: timeout)
+    }
+
+    /// `A|B` for alternatives, a `!` prefix for a failure condition.
+    static func split(_ expected: String) -> (nodes: [String], failures: [String]) {
         var nodes: [String] = []
         var failures: [String] = []
         for candidate in expected.split(separator: "|") {
@@ -199,7 +205,7 @@ struct WaitCommand: VerbCommand {
                 nodes.append(trimmed)
             }
         }
-        return .waitFor(nodes: nodes, failIf: failures, gone: gone, timeout: timeout)
+        return (nodes, failures)
     }
     func run() async throws { try await runVerb() }
 }

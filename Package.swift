@@ -25,6 +25,10 @@ let package = Package(
 		.target(name: "LoupeMac", dependencies: ["LoupeCore"]),
 		.target(name: "LoupeSim", dependencies: ["LoupeCore"]),
 
+		// Video in, animated GIF out: AVFoundation and ImageIO only. Kept out of
+		// LoupeCore so that stays free of platform frameworks.
+		.target(name: "LoupeMedia", dependencies: ["LoupeCore"]),
+
 		// Umbrella: target parsing -> driver resolution.
 		.target(name: "LoupeKit", dependencies: ["LoupeCore", "LoupeWeb", "LoupeMac", "LoupeSim"]),
 
@@ -53,9 +57,10 @@ let package = Package(
 				"LoupeKit",
 				"LoupeMCP",
 				"LoupeXCUI",
+				"LoupeMedia",
 				.product(name: "ArgumentParser", package: "swift-argument-parser"),
 			]),
 
-		.testTarget(name: "LoupeTests", dependencies: ["LoupeKit", "LoupeXCUI", "LoupeMCP"]),
+		.testTarget(name: "LoupeTests", dependencies: ["LoupeKit", "LoupeXCUI", "LoupeMCP", "LoupeMedia"]),
 	]
 )

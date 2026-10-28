@@ -23,22 +23,36 @@ public enum Deadline {
         // otherwise overflow the nanosecond conversion and trap.
         guard seconds > 0, seconds.isFinite else { return try await body() }
         let gate = Gate<T>()
-        Task.detached {
+        let work = Task.detached {
             do { gate.finish(.success(try await body())) } catch { gate.finish(.failure(error)) }
         }
         let description = what()
-        Task.detached {
+        let timer = Task.detached {
             let nanoseconds = (seconds * 1_000_000_000).rounded()
             try? await Task.sleep(
                 nanoseconds: nanoseconds < Double(UInt64.max) ? UInt64(nanoseconds) : .max)
+            guard !Task.isCancelled else { return }
             gate.finish(
                 .failure(
                     LoupeError.failed(
                         "\(description) did not answer within \(Int(seconds))s. It was abandoned "
                             + "rather than waited on, so nothing is stuck — but nothing was read "
                             + "either. Retry, and if it repeats the app is not answering.")))
+            // Abandoned, not forgotten: a body that honours cancellation stops
+            // here instead of carrying on driving the target.
+            work.cancel()
         }
-        return try await withCheckedThrowingContinuation { gate.attach($0) }
+        defer { timer.cancel() }
+        // Cancelling the caller stops the wait at once and cancels the body. The
+        // continuation alone never notices, so Ctrl-C would otherwise sit out the
+        // whole deadline.
+        return try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { gate.attach($0) }
+        } onCancel: {
+            gate.finish(.failure(CancellationError()))
+            work.cancel()
+            timer.cancel()
+        }
     }
 }
 

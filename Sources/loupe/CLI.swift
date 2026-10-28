@@ -47,7 +47,7 @@ struct LoupeCommand: AsyncParsableCommand {
             regions boxed, ready to attach to an issue or MR.
             """,
         subcommands: [
-            Capture.self, Describe.self,
+            Capture.self, Record.self, Convert.self, Describe.self,
             PressCommand.self, SetCommand.self, TypeCommand.self, KeyCommand.self,
             OpenCommand.self, RevealCommand.self, WaitCommand.self, TapCommand.self,
             Act.self, ScriptCommand.self,
