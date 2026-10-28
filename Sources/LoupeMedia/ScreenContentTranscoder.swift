@@ -142,7 +142,7 @@ public enum ScreenContentTranscoder {
             while !input.isReadyForMoreMediaData, writer.status != .failed {
                 try await Task.sleep(for: .milliseconds(5))
             }
-            if adaptor.append(lastKept.pixels, withPresentationTime: tail) { written += 1 }
+            _ = adaptor.append(lastKept.pixels, withPresentationTime: tail)
         }
         input.markAsFinished()
         // Ends the session at the source's end, which is what holds the last
