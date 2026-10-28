@@ -89,6 +89,13 @@ extension SimDriver {
         return ActionResult(message: "status bar overrides cleared on \(ready.device.name)")
     }
 
+    /// Whether anything is currently pinned in the status bar, so a caller that
+    /// pins it for a recording knows whether to clear it afterwards.
+    public func isStatusBarOverridden() async throws -> Bool {
+        let ready = try await ensureReady()
+        return await hasStatusBarOverride(ready.device)
+    }
+
     /// Whether anything is currently pinned in the status bar.
     ///
     /// Checked once during ``prepare()`` rather than per capture: `status_bar list`
