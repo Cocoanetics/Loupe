@@ -38,6 +38,7 @@ let package = Package(
 			dependencies: [
 				"LoupeKit",
 				"LoupeXCUI",
+				"LoupeMedia",
 				.product(name: "SwiftMCP", package: "SwiftMCP"),
 				.product(name: "Logging", package: "swift-log"),
 			]),

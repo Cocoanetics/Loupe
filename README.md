@@ -464,15 +464,34 @@ A diff tool that cries wolf is worse than none. Loupe defaults to:
 
 ## Recording
 
-Some things only show in motion. `loupe record` films a simulator (`sim:` targets;
-Mac windows and web pages are not supported yet):
+Some things only show in motion. `loupe record` films a simulator (`sim:`), a Mac
+window (`mac:`, through ScreenCaptureKit, occluded windows included) or a live
+session (`@name`); web pages are not supported yet:
 
 ```
 loupe record sim:booted --press Login --out tap.mp4     # records while the actions run, plus a 500ms tail
 loupe record sim:booted --duration 10s --out clip.mp4
 loupe record sim:booted --until 'Dashboard|!Invalid password'
+loupe record mac:Notes --duration 5s --out notes.mp4
 loupe record sim:booted --out run.mp4                    # no actions: runs until Ctrl-C, file is finalized
 ```
+
+To record across several commands — look, decide, act, look again — open a session
+and bracket the steps. The session's process holds the recorder in between:
+
+```
+loupe session open sim:booted --as phone
+loupe record @phone start
+loupe press @phone Login
+loupe wait @phone Dashboard
+loupe record @phone stop --out login.mp4 --gif
+```
+
+The target comes first, as with every verb. `start` takes `--region`/`--element` and
+`--appstore` (pin the status bar, stop at 30 s); `stop` takes `--out`, `--gif` and
+`--appstore` (render the preview). Give `--appstore` to both for an App Store preview;
+`stop` says so in its notes if the status bar was left live. A recording nobody stops ends on its own at the 120 s limit, and
+closing the session finalizes it too.
 
 To record only part of the screen and cut the file size, give `--region x,y,w,h` or
 `--element <handle|label>` (with `--padding N`, default 8 pt):
@@ -504,6 +523,34 @@ Where video cannot go (README, chat, email), `--gif` (or `--out run.gif`, or
 `loupe convert run.mp4 --gif`) makes an animated GIF. Frames that do not change are
 folded into one frame held for the combined time, so a 10 s clip with half a second of
 motion stays a few frames; `--fps`, `--max-width`, `--threshold` and `--no-loop` tune it.
+APNG and WebP are not offered: ImageIO cannot encode WebP, and neither animates on X,
+so GIF is the one still-image format that plays everywhere.
+
+### App Store previews
+
+`--appstore` (on `record`, `record stop` and `convert`) renders the recording the way
+App Store Connect wants an app preview, per Apple's "App preview specifications":
+
+```
+loupe record sim:booted --appstore --duration 20s --out preview.mp4
+loupe convert run.mp4 --appstore --appstore-device mac
+```
+
+- **Accepted resolution, not the device's.** 886×1920 for every modern iPhone (6.9"
+  down to 5.8"), 1080×1920 for the 16:9 home-button phones, 750×1334 for the 4.7",
+  1200×1600 for every iPad, 1920×1080 for Mac and Apple TV; each turned to match the
+  recording's orientation. The class is picked from the picture's shape (`--appstore-device
+  iphone|ipad|mac` forces it; `mac:` targets default to `mac`). A picture within 1 % of
+  the preset's shape is scaled to fill and loses a pixel or two at the edges; anything
+  else is letterboxed and the note says so.
+- **30 fps constant**, H.264 High Profile Level 4.0 at 11 Mbps, in Apple's 10–12 Mbps band.
+- **15 to 30 seconds.** A shorter recording holds its last frame to 15 s; a longer one is
+  cut at 30 s (and `--appstore` caps the recording itself at 30 s).
+- **A silent stereo AAC track** at 256 kbps / 44.1 kHz. Apple's page does not say audio
+  is required, but uploads without a track are widely reported to stall in processing.
+- On a simulator the status bar is pinned to 9:41, full battery and signal while
+  filming, and put back afterwards unless it was already pinned. The simulator driver
+  does this itself, so it holds for one-shot, MCP and session recordings alike.
 
 A recording shows everything on screen, including any secret the app displays. Unlike
 `describe` output, pixels are not redacted.
@@ -515,10 +562,15 @@ loupe mcp    # stdio MCP server
 ```
 
 Tools: `loupe_list_targets`, `loupe_capture`, `loupe_describe`, `loupe_act`,
-`loupe_script`, `loupe_eval`, `loupe_before`, `loupe_after`, `loupe_diff_report`,
+`loupe_record`, `loupe_script`, `loupe_eval`, `loupe_before`, `loupe_after`, `loupe_diff_report`,
 `loupe_compare`, `loupe_session_open`, `loupe_session_list`, `loupe_session_close`,
 `loupe_sim_status_bar`, `loupe_sim_appearance`, `loupe_doctor`. Images come back inline as content
 blocks (downscaled, since a full 5K capture costs ~2,500 image tokens).
+
+`loupe_record` takes the same options as `loupe record` — one step of each kind,
+`duration` or `until`, `region`/`element`, `gif`, `appStore` — and returns JSON with the
+file paths rather than the video, which is too big to hand back inline. It must be given
+an end (steps, `duration` or `until`): an agent has no Ctrl-C, and nothing runs past 120 s.
 
 `loupe_script` is the multi-step one: hand it a flow in the XCUITest API and it
 returns JSON with `status`, whatever the script printed, and every failed

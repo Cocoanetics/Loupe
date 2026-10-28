@@ -1,4 +1,5 @@
 import Foundation
+import LoupeKit
 import Testing
 
 @testable import LoupeMCP
@@ -128,5 +129,84 @@ struct LoupeToolsTests {
 
         #expect(LoupeHost.doctorOutput(report(allGood: true), json: true).allGood == true)
         #expect(LoupeHost.doctorOutput("not json", json: true).allGood == nil)
+    }
+}
+
+@Suite("Recording tool")
+struct RecordToolTests {
+    @Test func recordIsOnOffer() async {
+        let names = await LoupeTools().mcpToolMetadata.map(\.name)
+        #expect(names.contains("loupe_record"))
+    }
+
+    @Test func aCallMustSayWhenToStop() throws {
+        func request(duration: String? = nil, until: String? = nil) -> LoupeMCPServer.RecordRequest {
+            LoupeMCPServer.RecordRequest(
+                out: nil, duration: duration, until: until, region: nil, element: nil, gif: false, fps: nil,
+                maxWidth: nil, appStore: false, appStoreDevice: nil)
+        }
+        var tuned = request()
+        tuned.tail = "2s"
+        tuned.timeout = 4
+        tuned.padding = 3
+        tuned.element = "Login"
+        tuned.threshold = 0.5
+        tuned.loop = false
+        tuned.gif = true
+        guard case .after(let tail) = try tuned.stop(hasActions: true) else { Issue.record("no tail"); return }
+        #expect(tail == 2)
+        tuned.until = "Done"
+        guard case .until(_, _, let timeout) = try tuned.stop(hasActions: false) else {
+            Issue.record("no until"); return
+        }
+        #expect(timeout == 4)
+        guard case .element(_, let padding)? = try tuned.crop() else { Issue.record("no element"); return }
+        #expect(padding == 3)
+        let gif = try tuned.request(for: try LoupeKit.Target.parse("sim:booted")).gif
+        #expect(gif?.threshold == 0.5 && gif?.loop == false)
+        #expect(throws: (any Error).self) { try request().stop(hasActions: false) }
+        #expect(throws: (any Error).self) { try request(duration: "5s", until: "X").stop(hasActions: false) }
+        guard case .after(let tail) = try request().stop(hasActions: true) else { Issue.record("no tail"); return }
+        #expect(tail == 0.5)
+        guard case .after(let seconds) = try request(duration: "5s").stop(hasActions: false) else {
+            Issue.record("no duration"); return
+        }
+        #expect(seconds == 5)
+        guard case .until = try request(until: "Done").stop(hasActions: false) else {
+            Issue.record("no until"); return
+        }
+    }
+
+    @Test func outputsFollowTheCallContext() async throws {
+        let evidence = URL(fileURLWithPath: "/tmp/run-9/evidence", isDirectory: true)
+        let request = LoupeMCPServer.RecordRequest(
+            out: nil, duration: "1s", until: nil, region: nil, element: nil, gif: true, fps: nil,
+            maxWidth: nil, appStore: false, appStoreDevice: nil)
+        let schema = await LoupeTools().mcpToolMetadata.first { $0.name == "loupe_record" }
+        #expect(schema?.parameters.contains { $0.name == "steps" } == true)
+        let target = try LoupeKit.Target.parse("sim:booted")
+        try await LoupeCallContext(workingDirectory: nil, evidenceDirectory: evidence).perform {
+            let files = try request.request(for: target)
+            #expect(files.output.deletingLastPathComponent().path == evidence.path)
+            #expect(files.gifURL != nil)
+        }
+        var named = request
+        named.out = "clip.gif"
+        named.gif = false
+        let gifOnly = named
+        let base = URL(fileURLWithPath: "/tmp/run-9", isDirectory: true)
+        try await LoupeCallContext(workingDirectory: base, evidenceDirectory: nil).perform {
+            let files = try gifOnly.request(for: target)
+            #expect(files.output.path == "/tmp/run-9/clip.gif" && files.gifOnly)
+        }
+        named.appStore = true
+        let appStoreGIF = named
+        #expect(throws: (any Error).self) { try appStoreGIF.request(for: target) }
+        named.out = "clip.mp4"
+        named.appStoreDevice = "tv"
+        let unknownDevice = named
+        #expect(throws: (any Error).self) { try unknownDevice.request(for: target) }
+        named.appStoreDevice = "Mac"
+        #expect(try named.request(for: target).family == .mac)
     }
 }

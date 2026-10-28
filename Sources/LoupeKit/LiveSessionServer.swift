@@ -14,6 +14,10 @@ public final class LiveSessionServer: @unchecked Sendable {
     private var driver: (any UIDriver)?
     private var shouldStop = false
 
+    /// The recording held between `record start` and `record stop`, if any.
+    private let recorder = SessionRecorder()
+    private var terminationSource: DispatchSourceSignal?
+
     /// Tracks liveness for the idle watchdog. An actor rather than a lock:
     /// NSLock is unavailable from async contexts under Swift 6, and this is
     /// touched from the connection handler and the watchdog task.
@@ -56,12 +60,35 @@ public final class LiveSessionServer: @unchecked Sendable {
         }
 
         startIdleWatchdog()
+        finalizeRecordingOnTermination()
 
         for await clientFD in acceptedConnections(on: listener.socketFD) {
             await handle(clientFD)
             if shouldStop { break }
         }
+        // A recording nobody stopped must still end properly, or the file is
+        // unplayable and a simctl child is left filming.
+        await recorder.abandon()
         await driver.shutdown()
+    }
+
+    /// `session close` sends SIGTERM, whose default action would end this
+    /// process mid-write. Stop the recording first; the file is then at least
+    /// playable, and no recorder process outlives the session.
+    private func finalizeRecordingOnTermination() {
+        signal(SIGTERM, SIG_IGN)
+        let source = DispatchSource.makeSignalSource(signal: SIGTERM, queue: .global())
+        let recorder = self.recorder
+        let name = self.name
+        source.setEventHandler {
+            Task.detached {
+                await recorder.abandon()
+                LiveSession.remove(name)
+                exit(0)
+            }
+        }
+        source.resume()
+        terminationSource = source
     }
 
     /// Listen on an ephemeral loopback port. Loopback because nothing about this
@@ -192,12 +219,26 @@ public final class LiveSessionServer: @unchecked Sendable {
                 let result = try await Loupe.perform(action, on: driver)
                 return LiveSession.Response(
                     succeeded: true, action: LiveSession.ActionResultWire(result))
+            case "record-start", "record-stop":
+                return try await performRecording(request, on: driver)
             case "close":
                 shouldStop = true
                 return LiveSession.Response(succeeded: true, info: "closing")
             default:
                 throw LoupeError.failed("unknown verb '\(request.verb)'")
         }
+    }
+
+    /// The recording verbs: start holds the recorder here, stop hands back the file.
+    private func performRecording(_ request: LiveSession.Request, on driver: any UIDriver) async throws
+        -> LiveSession.Response {
+        if request.verb == "record-start" {
+            guard let record = request.record else { throw LoupeError.failed("record-start needs a file") }
+            try await recorder.start(on: driver, url: URL(fileURLWithPath: record.url), options: record.options)
+            return LiveSession.Response(succeeded: true, info: "recording")
+        }
+        let result = try await recorder.stop()
+        return LiveSession.Response(succeeded: true, recording: LiveSession.RecordingResultWire(result))
     }
 
     private func reply(_ response: LiveSession.Response, to clientFD: Int32) throws {

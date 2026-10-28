@@ -1,6 +1,7 @@
 import Darwin
 import Foundation
 import LoupeKit
+import LoupeMedia
 import LoupeSim
 import LoupeXCUI
 import SwiftMCP
@@ -21,12 +22,13 @@ import SwiftMCP
 /// members declared in the actor's own body; everything else is in
 /// `LoupeMCPServer+Support.swift`.
 ///
-/// Which is also why `file_length` is off for this file: the usual remedy is to
-/// split the type across extensions, and doing that would silently unregister
-/// every tool moved out. What is left here is one small helper and the tools'
+/// Which is also why `file_length` and `type_body_length` are off for this file:
+/// the usual remedy is to split the type across extensions, and doing that would
+/// silently unregister every tool moved out. What is left here is one small helper and the tools'
 /// own documentation — and that documentation is load-bearing, since a tool an
 /// agent is not told about is a tool it does not use.
 @MCPServer(name: "loupe", version: "0.1.0")
+// swiftlint:disable:next type_body_length
 public actor LoupeMCPServer {
 
     /// Longest edge, in pixels, of images handed back to the model.
@@ -230,6 +232,117 @@ public actor LoupeMCPServer {
             captureAfter: .default)
         guard let shot else { throw LoupeError.failed("actions ran but no screenshot was produced") }
         return try image(shot.png)
+    }
+
+    /// Record a simulator, a Mac window or a live session to video while a few
+    /// steps run, and get back the file paths — not the video, which is too big
+    /// to hand back inline.
+    ///
+    /// Use this when a still cannot show what happened: a button animating, a
+    /// transition, a progress indicator. The video is H.264 MP4, which GitHub and
+    /// GitLab play inline when attached; `gif` adds an animated GIF for places
+    /// that only take images, with still stretches folded into single frames so
+    /// it stays small. A recording shows everything on screen, secrets
+    /// included — nothing is redacted, unlike `loupe_describe`.
+    ///
+    /// The call is bounded: it ends after the steps plus a half-second tail, at
+    /// `duration`, or when `until` shows up (30 s at most), and never runs past
+    /// 120 s. Give at least one of the three; there is no Ctrl-C here.
+    /// - Parameter target: `sim:booted`, `mac:Notes` or `@session`. Web pages cannot be recorded.
+    /// - Parameter out: Where to write the video. Relative paths resolve against the
+    ///   run's directory; omit for a timestamped file in its evidence directory. A
+    ///   `.gif` name asks for the GIF alone.
+    /// - Parameter duration: How long to film, e.g. `5s` or `500ms`. Alternative to `until`.
+    /// - Parameter until: Film until this element shows up: `A|B`, `!X` as a failure (as in `wait`).
+    /// - Parameter region: Keep only `x,y,w,h` in target points (see `loupe_capture`).
+    /// - Parameter element: Keep only this element's frame, with 8 pt of padding.
+    /// - Parameter steps: Ordered steps as `kind:argument`, the way `loupe --step` spells
+    ///   them (`set:Email=a@b.c`, `press:Login`, `await:Dashboard@10`, `click:n:0.5,0.5`,
+    ///   `wait:2`). They run exactly in this order and win over the single-step
+    ///   parameters below, which run in `loupe_act`'s fixed order.
+    /// - Parameter press: Element to activate while filming.
+    /// - Parameter setValue: `<element>=<text>`, as in `loupe_act`.
+    /// - Parameter click: `x,y` in window points, as in `loupe_act`.
+    /// - Parameter type: Text to type into whatever has focus.
+    /// - Parameter key: A key such as `return` or `cmd+s`.
+    /// - Parameter scroll: `dx,dy`.
+    /// - Parameter open: A URL or deep link to open first.
+    /// - Parameter launch: An app to launch first.
+    /// - Parameter tail: How long to keep filming after the steps, default `500ms`.
+    /// - Parameter timeout: Seconds to wait for `until`, default 30.
+    /// - Parameter padding: Points added around `element` on every side, default 8.
+    /// - Parameter gif: Also write an animated GIF next to the video.
+    /// - Parameter fps: GIF: frames sampled per second, default 10.
+    /// - Parameter maxWidth: GIF: width in pixels, default 800.
+    /// - Parameter threshold: GIF: how different a frame must be (0–1) to count as changed, default 0.002.
+    /// - Parameter loop: GIF: play forever (default) or once.
+    /// - Parameter appStore: Render an App Store preview instead: the accepted
+    ///   resolution for the device class, 30 fps, held to 15 s and cut at 30 s,
+    ///   H.264 with a silent stereo track, and a simulator's status bar pinned
+    ///   to 9:41 while filming.
+    /// - Parameter appStoreDevice: `iphone`, `ipad` or `mac` for `appStore`.
+    ///   Default: `mac` for a Mac window, otherwise by the picture's shape.
+    /// - Returns: JSON with `videoPath`, `gifPath`, `duration`, `bytes` and `notes`.
+    @MCPTool
+    public func loupe_record(
+        target: String,
+        out: String? = nil,
+        duration: String? = nil,
+        until: String? = nil,
+        region: String? = nil,
+        element: String? = nil,
+        steps: [String]? = nil,
+        press: String? = nil,
+        setValue: String? = nil,
+        click: String? = nil,
+        type: String? = nil,
+        key: String? = nil,
+        scroll: String? = nil,
+        open: String? = nil,
+        launch: String? = nil,
+        tail: String? = nil,
+        timeout: Double? = nil,
+        padding: Double? = nil,
+        gif: Bool? = nil,
+        fps: Double? = nil,
+        maxWidth: Int? = nil,
+        threshold: Double? = nil,
+        loop: Bool? = nil,
+        appStore: Bool? = nil,
+        appStoreDevice: String? = nil
+    ) async throws -> String {
+        let parsed = try Target.parse(target)
+        let pending: [UIAction]
+        if let steps, !steps.isEmpty {
+            pending = try steps.map(UIAction.parse(step:))
+        } else {
+            pending = try ActionRequest(
+                press: press, setValue: setValue, click: click, type: type, key: key, scroll: scroll,
+                open: open, launch: launch).actions()
+        }
+        let request = RecordRequest(
+            out: out, duration: duration, until: until, region: region, element: element,
+            gif: gif ?? false, fps: fps, maxWidth: maxWidth, appStore: appStore ?? false,
+            appStoreDevice: appStoreDevice, tail: tail, timeout: timeout, padding: padding,
+            threshold: threshold, loop: loop)
+        let stop = try request.stop(hasActions: !pending.isEmpty)
+        let kept = try request.crop()
+        var files = try request.request(for: parsed)
+        if files.family == nil, files.appStore, try Loupe.recordingSurface(of: parsed) == .mac {
+            files.family = .mac
+        }
+        let limit = files.appStore ? AppStorePreview.maxDuration : RecordOptions.hardLimit
+        let pin = files.appStore
+        let surface = options(viewport: nil, scale: nil, profile: nil)
+        let product = try await RecordingPipeline.produce(files) { raw in
+            try await Loupe.record(
+                parsed, to: raw, options: surface, record: RecordOptions(maxDuration: limit), region: kept,
+                actions: pending, stop: stop, pinStatusBar: pin)
+        }
+        return try Self.encode(
+            RecordingReport(
+                videoPath: product.video?.path, gifPath: product.gif?.path, duration: product.duration,
+                bytes: product.bytes, notes: product.notes))
     }
 
     /// Run a whole UI flow written in the XCUITest API, and get back what it

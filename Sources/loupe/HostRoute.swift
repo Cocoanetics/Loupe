@@ -32,7 +32,7 @@ enum HostRoute {
                     + "may only go to a loopback host or an https:// one")
         }
         switch command {
-            case is MCPCommand, is Capture, is Describe, is Act, is List, is Doctor, is any VerbCommand:
+            case is MCPCommand, is Capture, is Describe, is Act, is List, is Doctor, is Record, is any VerbCommand:
                 return
             default:
                 throw unsupported("`loupe \(type(of: command).configuration.commandName ?? "this command")`")
@@ -220,5 +220,49 @@ extension Doctor {
             if !json { print("\nSome surfaces are unavailable. Fix the items marked ✗ above.") }
             throw ExitCode(1)
         }
+    }
+}
+
+extension Record {
+    /// `loupe_record` on the host. The host films and encodes; the paths it
+    /// prints are on the host's disk, which for a loopback host is this one.
+    func runOnHost(_ client: LoupeHostClient, target parsed: Target) async throws {
+        var arguments = HostRoute.targetArguments(parsed, target.options())
+        // As an ordered step list, so `--set … --press …` fills the form before
+        // submitting it on the host exactly as it does here.
+        let pending = try actions.actions()
+        if !pending.isEmpty {
+            arguments["steps"] = .array(pending.map { .string($0.step) })
+        }
+        for (key, value) in hostOptions() { arguments[key] = value }
+        let reply = try await client.call("loupe_record", arguments)
+        guard let data = reply.text.data(using: .utf8),
+            let report = try? JSONDecoder().decode(RecordingReport.self, from: data)
+        else {
+            print(reply.text)
+            return
+        }
+        if let video = report.videoPath { print(video) }
+        if let gif = report.gifPath { print(gif) }
+        report.notes.forEach(OutputFlags.note)
+    }
+
+    /// The flags that are not steps, as `loupe_record` spells them. Every one
+    /// is forwarded, so the host records what this command line asked for.
+    private func hostOptions() -> JSONDictionary {
+        var out: JSONDictionary = [
+            "fps": .double(output.gifFlags.fps), "maxWidth": .integer(output.gifFlags.maxWidth),
+            "threshold": .double(output.gifFlags.threshold), "loop": .bool(!output.gifFlags.noLoop),
+            "tail": .string(tail), "timeout": .double(timeout), "padding": .double(region.padding)
+        ]
+        if let duration { out["duration"] = .string(duration) }
+        if let until { out["until"] = .string(until) }
+        if let frame = region.region { out["region"] = .string(frame) }
+        if let element = region.element { out["element"] = .string(element) }
+        if let path = output.out { out["out"] = .string(URL(fileURLWithPath: path).path) }
+        if output.gif { out["gif"] = .bool(true) }
+        if output.appstore { out["appStore"] = .bool(true) }
+        if let family = output.appstoreDevice { out["appStoreDevice"] = .string(family.rawValue) }
+        return out
     }
 }

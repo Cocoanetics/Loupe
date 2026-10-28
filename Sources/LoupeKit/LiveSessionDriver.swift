@@ -53,6 +53,15 @@ public final class LiveSessionDriver: UIDriver, @unchecked Sendable {
     /// entire point. Close it explicitly with `loupe session close`.
     public func shutdown() async {}
 
+    /// Ends the recording the session holds and returns what it filmed.
+    public func stopRecording() async throws -> RecordingResult {
+        let response = try send(LiveSession.Request(token: descriptor.token, verb: "record-stop"))
+        guard let wire = response.recording else {
+            throw LoupeError.failed("live session returned no recording")
+        }
+        return wire.result
+    }
+
     private func send(_ request: LiveSession.Request) throws -> LiveSession.Response {
         let socketFD = try connectToSession()
         defer { close(socketFD) }
@@ -113,5 +122,27 @@ public final class LiveSessionDriver: UIDriver, @unchecked Sendable {
                     + "it has been forgotten. Reopen it.")
         }
         return socketFD
+    }
+}
+
+/// Recording through a session: the session's own process films, so a recording
+/// can span commands (`record start` … `act` … `record stop`), and a one-shot
+/// `loupe record @name` works too. The region travels to the session, which
+/// crops at the source when its driver can and otherwise resolves it there and
+/// hands it back in the result for the caller to crop.
+extension LiveSessionDriver: RecordingDriver {
+    public var cropsRegionAtSource: Bool { true }
+
+    public func startRecording(to url: URL, options: RecordOptions) async throws -> any RecordingHandle {
+        _ = try send(
+            LiveSession.Request(
+                token: descriptor.token, verb: "record-start",
+                record: LiveSession.RecordWire(url: url, options: options)))
+        return Handle(driver: self)
+    }
+
+    private struct Handle: RecordingHandle {
+        let driver: LiveSessionDriver
+        func stop() async throws -> RecordingResult { try await driver.stopRecording() }
     }
 }

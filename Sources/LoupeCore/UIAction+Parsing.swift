@@ -163,3 +163,41 @@ extension UIAction {
         return (nodes, failures)
     }
 }
+
+extension UIAction {
+    /// The `kind:argument` spelling ``parse(step:)`` reads back, so an ordered
+    /// list of actions can travel as text — to a host, say — and come back in
+    /// the same order. Values are already expanded; what is written is what runs.
+    public var step: String {
+        switch self {
+            case .press(let node): return "press:\(node)"
+            case .setValue(let node, let value): return "set:\(node)=\(value)"
+            case .scrollTo(let node): return "reveal:\(node)"
+            case .click(let x, let y, let space, let viaCursor):
+                return "\(viaCursor ? "cursorclick" : "click"):\(space.stepPrefix)\(x),\(y)"
+            case .type(let text): return "type:\(text)"
+            case .key(let key): return "key:\(key)"
+            case .scroll(let dx, let dy): return "scroll:\(dx),\(dy)"
+            case .navigate(let url): return "open:\(url)"
+            case .evaluate(let script): return "eval:\(script)"
+            case .launch(let app): return "launch:\(app)"
+            case .terminate(let app): return "terminate:\(app)"
+            case .settle(let timeout): return "wait:\(timeout)"
+            case .waitFor(let nodes, let failIf, let gone, let timeout):
+                let selectors = (nodes + failIf.map { "!\($0)" }).joined(separator: "|")
+                return "\(gone ? "gone" : "await"):\(selectors)@\(timeout)"
+        }
+    }
+}
+
+extension CoordinateSpace {
+    /// What a `click:` step writes before the numbers to name this space.
+    var stepPrefix: String {
+        switch self {
+            case .windowPoints: return ""
+            case .screenPoints: return "screen:"
+            case .windowPixels: return "px:"
+            case .normalized: return "n:"
+        }
+    }
+}

@@ -20,6 +20,7 @@ extension LiveSession {
         var capture: CaptureWire?
         var describe: DescribeWire?
         var action: ActionWire?
+        var record: RecordWire?
     }
 
     struct Response: Codable {
@@ -29,6 +30,69 @@ extension LiveSession {
         var nodes: [UINode]?
         var action: ActionResultWire?
         var info: String?
+        var recording: RecordingResultWire?
+    }
+
+    /// `record-start`: where to film and for how long at most.
+    struct RecordWire: Codable {
+        var url: String
+        var maxDuration: Double
+        var frame: Frame?
+        var element: String?
+        var padding: Double?
+        var pinStatusBar: Bool?
+
+        init(url: URL, options: RecordOptions) {
+            self.url = url.path
+            maxDuration = options.maxDuration
+            pinStatusBar = options.pinStatusBar
+            switch options.region {
+                case .frame(let frame): self.frame = frame
+                case .element(let needle, let padding):
+                    element = needle
+                    self.padding = padding
+                case nil: break
+            }
+        }
+
+        var options: RecordOptions {
+            var options = RecordOptions(maxDuration: maxDuration)
+            options.pinStatusBar = pinStatusBar ?? false
+            if let frame {
+                options.region = .frame(frame)
+            } else if let element {
+                options.region = .element(element, padding: padding ?? 0)
+            }
+            return options
+        }
+    }
+
+    /// `record-stop`: the file and, when the session could not crop at the
+    /// source, the region the caller should crop to.
+    struct RecordingResultWire: Codable {
+        var url: String
+        var duration: Double
+        var bytes: Int
+        var notes: [String]
+        var region: Frame?
+        var scale: Double?
+
+        init(_ result: RecordingResult) {
+            url = result.url.path
+            duration = result.duration
+            bytes = result.bytes
+            notes = result.notes
+            region = result.region
+            scale = result.scale
+        }
+
+        var result: RecordingResult {
+            var result = RecordingResult(
+                url: URL(fileURLWithPath: url), duration: duration, bytes: bytes, notes: notes)
+            result.region = region
+            result.scale = scale
+            return result
+        }
     }
 
     struct CaptureWire: Codable {

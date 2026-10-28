@@ -9,6 +9,22 @@ public enum RecordStop: Sendable {
     case until(nodes: [String], failIf: [String], timeout: TimeInterval)
     /// Run until the task is cancelled, which is how Ctrl-C finalizes the file.
     case cancelled
+
+    /// `--until` as `wait` spells it: `A|B` for alternatives, `!X` for a failure.
+    public static func until(_ spec: String, timeout: TimeInterval) -> RecordStop {
+        var nodes: [String] = []
+        var failures: [String] = []
+        for candidate in spec.split(separator: "|") {
+            let trimmed = candidate.trimmingCharacters(in: .whitespaces)
+            guard !trimmed.isEmpty else { continue }
+            if trimmed.hasPrefix("!") {
+                failures.append(String(trimmed.dropFirst()))
+            } else {
+                nodes.append(trimmed)
+            }
+        }
+        return .until(nodes: nodes, failIf: failures, timeout: timeout)
+    }
 }
 
 extension Loupe {
@@ -17,6 +33,11 @@ extension Loupe {
     /// Cancelling the calling task is a graceful stop, not a failure: the file is
     /// finalized and returned. Every other exit path stops the recording too, so
     /// no simctl child is left running.
+    ///
+    /// - Parameter pinStatusBar: on a simulator, show Apple's 9:41 status bar
+    ///   while filming and put the live one back afterwards — what an App Store
+    ///   preview wants. Ignored elsewhere. The simulator driver does the pinning,
+    ///   so it holds through a session too, whose driver is only a proxy.
     public static func record(
         _ target: Target,
         to url: URL,
@@ -24,18 +45,27 @@ extension Loupe {
         record: RecordOptions = .default,
         region: RecordRegion? = nil,
         actions: [UIAction] = [],
-        stop: RecordStop
+        stop: RecordStop,
+        pinStatusBar: Bool = false
     ) async throws -> RecordingResult {
-        // Before withDriver, which would load a page or boot a device for nothing.
-        guard target.surface == .sim || target.surface == .mac else {
+        // Before withDriver, which would load a page for nothing.
+        guard target.surface != .web else {
             throw LoupeError.unsupported(
-                "recording works on sim: and mac: targets for now — web: is not implemented yet")
+                "recording works on sim:, mac: and @session targets — web: is not implemented yet")
         }
+        var record = record
+        record.pinStatusBar = record.pinStatusBar || pinStatusBar
         return try await withDriver(target, options: options) { driver in
             try await recordSession(
-                on: driver,
-                Session(url: url, record: record, region: region, actions: actions, stop: stop))
+                on: driver, Session(url: url, record: record, region: region, actions: actions, stop: stop))
         }
+    }
+
+    /// The surface a recording of `target` ends up on: a session's is the one it
+    /// was opened on. What `--appstore` needs to default a Mac window to the Mac
+    /// preset.
+    public static func recordingSurface(of target: Target) throws -> Surface {
+        try LiveSession.underlyingTarget(of: target).surface
     }
 
     struct Session {
@@ -68,30 +98,11 @@ extension Loupe {
         // than after the recording it would have thrown away.
         var crop: (region: Frame, scale: Double)?
         if let region {
-            crop = try await resolve(region, on: driver)
+            crop = try await resolveRegion(region, on: driver)
         }
         let handle = try await recorder.startRecording(to: url, options: record)
-        let startedAt = Date()
-        let remaining = { max(0, record.maxDuration - Date().timeIntervalSince(startedAt)) }
         do {
-            if !actions.isEmpty {
-                try await Deadline.run(
-                    seconds: remaining(), "the actions, within the \(Int(record.maxDuration))s recording limit"
-                ) {
-                    for action in actions { try await perform(action, on: driver) }
-                }
-            }
-            switch stop {
-                case .after(let seconds):
-                    try await hold(min(seconds, remaining()))
-                case .until(let nodes, let failIf, let timeout):
-                    try await perform(
-                        .waitFor(
-                            nodes: nodes, failIf: failIf, gone: false,
-                            timeout: min(timeout, remaining())), on: driver)
-                case .cancelled:
-                    try await hold(remaining())
-            }
+            try await film(actions, then: stop, on: driver, limit: record.maxDuration)
         } catch is CancellationError {
             // Ctrl-C: fall through to stop and keep what was filmed.
         } catch {
@@ -100,16 +111,46 @@ extension Loupe {
             throw error
         }
         var result = try await handle.stop()
-        result.region = crop?.region
-        result.scale = crop?.scale
+        // A session that could not crop at its source hands the region back in
+        // the result; only a crop resolved here replaces it.
+        if let crop {
+            result.region = crop.region
+            result.scale = crop.scale
+        }
         return result
+    }
+
+    /// What happens while the recorder runs: the actions, then the closing wait,
+    /// all under one deadline counted from now.
+    private static func film(
+        _ actions: [UIAction], then stop: RecordStop, on driver: any UIDriver, limit: TimeInterval
+    ) async throws {
+        let startedAt = Date()
+        let remaining = { max(0, limit - Date().timeIntervalSince(startedAt)) }
+        if !actions.isEmpty {
+            try await Deadline.run(
+                seconds: remaining(), "the actions, within the \(Int(limit))s recording limit"
+            ) {
+                for action in actions { try await perform(action, on: driver) }
+            }
+        }
+        switch stop {
+            case .after(let seconds):
+                try await hold(min(seconds, remaining()))
+            case .until(let nodes, let failIf, let timeout):
+                try await perform(
+                    .waitFor(nodes: nodes, failIf: failIf, gone: false, timeout: min(timeout, remaining())),
+                    on: driver)
+            case .cancelled:
+                try await hold(remaining())
+        }
     }
 
     /// Turns a region into points inside the screen, using a screenshot for the
     /// screen's size and scale. An element's frame is read now, at the start;
     /// if the element moves during the recording the crop does not follow it.
-    private static func resolve(_ region: RecordRegion, on driver: any UIDriver) async throws
-        -> (Frame, Double) {
+    static func resolveRegion(_ region: RecordRegion, on driver: any UIDriver) async throws
+        -> (region: Frame, scale: Double) {
         let shot = try await driver.capture(CaptureOptions(settle: false))
         let width = shot.pointSize.width
         let height = shot.pointSize.height

@@ -2,6 +2,7 @@ import Darwin
 import Foundation
 import Logging
 import LoupeKit
+import LoupeMedia
 import SwiftMCP
 
 // The pieces `LoupeMCPServer` needs but that are not tools themselves. They live
@@ -245,6 +246,109 @@ extension LoupeMCPServer {
     /// directory when the call names none.
     static func directory(_ path: String?) -> URL? {
         path.map { LoupeCallContext.resolve($0) } ?? LoupeCallContext.current.evidenceDirectory
+    }
+}
+
+/// What `loupe_record` hands back: the files, and what happened on the way.
+public struct RecordingReport: Codable, Sendable {
+    /// The H.264 video, absent when only a GIF was asked for.
+    public var videoPath: String?
+    /// The animated GIF, when one was asked for.
+    public var gifPath: String?
+    /// Seconds filmed.
+    public var duration: Double
+    /// Size of the video (or of the GIF when that is all there is), in bytes.
+    public var bytes: Int
+    /// Frame counts, fallbacks, the App Store preset chosen, the status bar.
+    public var notes: [String]
+
+    public init(videoPath: String?, gifPath: String?, duration: Double, bytes: Int, notes: [String]) {
+        self.videoPath = videoPath
+        self.gifPath = gifPath
+        self.duration = duration
+        self.bytes = bytes
+        self.notes = notes
+    }
+}
+
+extension LoupeMCPServer {
+    /// The pieces of a `loupe_record` call that are not the target.
+    struct RecordRequest {
+        var out: String?
+        var duration: String?
+        var until: String?
+        var region: String?
+        var element: String?
+        var gif: Bool
+        var fps: Double?
+        var maxWidth: Int?
+        var appStore: Bool
+        var appStoreDevice: String?
+        var tail: String?
+        var timeout: Double?
+        var padding: Double?
+        var threshold: Double?
+        var loop: Bool?
+
+        /// When the recording ends. An agent has no Ctrl-C, so a call that names
+        /// no end at all is refused rather than left to run to the limit.
+        func stop(hasActions: Bool) throws -> RecordStop {
+            if duration != nil, until != nil {
+                throw LoupeError.failed("`duration` and `until` are alternatives — give one")
+            }
+            if let until { return .until(until, timeout: timeout ?? 30) }
+            if let duration { return .after(try DurationSpec.parse(duration)) }
+            if hasActions { return .after(try DurationSpec.parse(tail ?? "500ms")) }
+            throw LoupeError.failed(
+                "say when to stop: `duration` (e.g. \"5s\"), `until` (an element to wait for), "
+                    + "or at least one action to film")
+        }
+
+        func crop() throws -> RecordRegion? {
+            if region != nil, element != nil {
+                throw LoupeError.failed("`region` and `element` are alternatives — give one")
+            }
+            if let region { return .frame(try RecordCrop.parse(region)) }
+            if let element { return .element(element, padding: padding ?? 8) }
+            return nil
+        }
+
+        func family() throws -> AppStorePreview.Family? {
+            guard let appStoreDevice else { return nil }
+            guard let family = AppStorePreview.Family(rawValue: appStoreDevice.lowercased()) else {
+                throw LoupeError.failed(
+                    "unknown appStoreDevice '\(appStoreDevice)' — use "
+                        + AppStorePreview.Family.allCases.map(\.rawValue).joined(separator: ", "))
+            }
+            return family
+        }
+
+        /// The files to make. Without `out`, a timestamped .mp4 in the host's
+        /// evidence directory, else in the temporary directory.
+        func request(for target: Target) throws -> RecordingRequest {
+            let output: URL
+            if let out {
+                output = LoupeCallContext.resolve(out)
+            } else {
+                let formatter = DateFormatter()
+                formatter.dateFormat = "yyyyMMdd-HHmmss"
+                let safe = target.locator.replacingOccurrences(
+                    of: "[^A-Za-z0-9._-]", with: "-", options: .regularExpression)
+                let base = LoupeMCPServer.directory(nil) ?? FileManager.default.temporaryDirectory
+                output = base.appendingPathComponent("loupe-\(safe)-\(formatter.string(from: Date())).mp4")
+            }
+            if appStore, output.pathExtension.lowercased() == "gif" {
+                throw LoupeError.failed("appStore makes a video; give `out` an .mp4 name (and `gif` for a GIF too)")
+            }
+            let wantsGIF = gif || output.pathExtension.lowercased() == "gif"
+            return RecordingRequest(
+                output: output,
+                gif: wantsGIF
+                    ? GIFOptions(
+                        fps: fps ?? 10, maxWidth: maxWidth ?? 800, threshold: threshold ?? 0.002, loop: loop ?? true)
+                    : nil,
+                appStore: appStore, family: try family())
+        }
     }
 }
 

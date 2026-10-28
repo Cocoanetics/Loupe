@@ -80,6 +80,13 @@ public enum LiveSession {
         return collapsed.isEmpty ? "session" : String(collapsed.prefix(40)).lowercased()
     }
 
+    /// What a target really is: `@name` resolved to the target its session was
+    /// opened on, anything else unchanged. Throws when the session is gone.
+    public static func underlyingTarget(of target: Target) throws -> Target {
+        guard target.surface == .live else { return target }
+        return try Target.parse(try load(target.locator).target)
+    }
+
     static func descriptorURL(_ name: String) -> URL {
         registryRoot.appendingPathComponent("\(sanitize(name)).json")
     }
