@@ -436,6 +436,31 @@ A diff tool that cries wolf is worse than none. Loupe defaults to:
 - **Warning when nothing changed**, because an identical "after" usually means
   the fix is not in the running build, not that the fix is invisible.
 
+## Recording
+
+Some things only show in motion. `loupe record` films a simulator (`sim:` targets;
+Mac windows and web pages are not supported yet):
+
+```
+loupe record sim:booted --press Login --out tap.mp4     # records while the actions run, plus a 500ms tail
+loupe record sim:booted --duration 10s --out clip.mp4
+loupe record sim:booted --until 'Dashboard|!Invalid password'
+loupe record sim:booted --out run.mp4                    # no actions: runs until Ctrl-C, file is finalized
+```
+
+MP4 (H.264) is the primary format: GitHub and GitLab take it as an attachment, and
+it is what social media and App Store previews want. Every recording is bounded
+(120 s at most) and stopped with SIGINT so simctl finalizes the file; Loupe stops its
+`simctl` child on every exit path, except if Loupe itself is `kill -9`'d.
+
+Where video cannot go (README, chat, email), `--gif` (or `--out run.gif`, or
+`loupe convert run.mp4 --gif`) makes an animated GIF. Frames that do not change are
+folded into one frame held for the combined time, so a 10 s clip with half a second of
+motion stays a few frames; `--fps`, `--max-width`, `--threshold` and `--no-loop` tune it.
+
+A recording shows everything on screen, including any secret the app displays. Unlike
+`describe` output, pixels are not redacted.
+
 ## MCP
 
 ```bash
