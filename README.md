@@ -436,6 +436,52 @@ A diff tool that cries wolf is worse than none. Loupe defaults to:
 - **Warning when nothing changed**, because an identical "after" usually means
   the fix is not in the running build, not that the fix is invisible.
 
+## Recording
+
+Some things only show in motion. `loupe record` films a simulator (`sim:` targets;
+Mac windows and web pages are not supported yet):
+
+```
+loupe record sim:booted --press Login --out tap.mp4     # records while the actions run, plus a 500ms tail
+loupe record sim:booted --duration 10s --out clip.mp4
+loupe record sim:booted --until 'Dashboard|!Invalid password'
+loupe record sim:booted --out run.mp4                    # no actions: runs until Ctrl-C, file is finalized
+```
+
+To record only part of the screen and cut the file size, give `--region x,y,w,h` or
+`--element <handle|label>` (with `--padding N`, default 8 pt):
+
+```
+loupe record sim:booted --element Login --padding 12 --press Login --out button.mp4
+loupe record sim:booted --region 0,100,390,200 --duration 5s
+```
+
+`--region` uses the same space as `capture --region` and `describe` frames: **points**,
+origin at the **top-left** of the screen, x to the right, y downward. Pixels are points
+times the device scale (3.0 on most iPhones, 2.0 on iPads). It must lie inside the screen,
+otherwise recording refuses to start. `--element` takes the element's frame as `describe`
+reports it when recording starts, grows it by the padding, and clamps it to the screen.
+simctl always films the whole screen, so the crop is applied while the video is re-encoded
+(and so carries into the GIF). The crop is snapped outward to even pixel sizes, which H.264
+requires. A later Mac recorder will use `SCStreamConfiguration.sourceRect` for the same options.
+
+MP4 (H.264) is the primary format: GitHub and GitLab take it as an attachment, and
+X requires it. It is re-encoded for screen content after recording: H.264 High profile,
+variable frame rate (a sample is written only when the screen changed, so a still
+screen costs nothing), native resolution with no downscaling, and quality 0.85 so UI
+text stays sharp. HEVC and AV1 have screen-content tools but no VideoToolbox encoder
+or broad playback; HEVC is only on the table for a later App Store preset. Every recording is bounded
+(120 s at most) and stopped with SIGINT so simctl finalizes the file; Loupe stops its
+`simctl` child on every exit path, except if Loupe itself is `kill -9`'d.
+
+Where video cannot go (README, chat, email), `--gif` (or `--out run.gif`, or
+`loupe convert run.mp4 --gif`) makes an animated GIF. Frames that do not change are
+folded into one frame held for the combined time, so a 10 s clip with half a second of
+motion stays a few frames; `--fps`, `--max-width`, `--threshold` and `--no-loop` tune it.
+
+A recording shows everything on screen, including any secret the app displays. Unlike
+`describe` output, pixels are not redacted.
+
 ## MCP
 
 ```bash
