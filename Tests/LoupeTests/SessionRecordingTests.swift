@@ -57,7 +57,7 @@ private final class FakeRecorder: RecordingDriver, @unchecked Sendable {
         let recorder = SessionRecorder()
         let driver = FakeRecorder(actionDuration: 0)
         try await recorder.start(on: driver, url: scratch(), options: RecordOptions(maxDuration: 0.2))
-        try await Task.sleep(for: .milliseconds(600))
+        try await waitForTheLimit(driver)
         #expect(driver.stopCount == 1)
         let result = try await recorder.stop()
         #expect(result.notes.contains { $0.contains("limit") })
@@ -112,6 +112,16 @@ private final class FakeRecorder: RecordingDriver, @unchecked Sendable {
     }
 }
 
+/// Waits for the 0.2 s watchdog to stop `driver`. Polled rather than slept
+/// through a fixed delay: on a loaded CI runner the watchdog task can be
+/// scheduled late, and a fixed 600 ms was not enough.
+private func waitForTheLimit(_ driver: FakeRecorder) async throws {
+    let deadline = Date().addingTimeInterval(10)
+    while driver.stopCount == 0, Date() < deadline {
+        try await Task.sleep(for: .milliseconds(20))
+    }
+}
+
 private final class NotARecorder: UIDriver, @unchecked Sendable {
     let targetDescription = "web:fake"
     func capture(_ options: CaptureOptions) async throws -> Capture { throw LoupeError.unsupported("fake") }
@@ -141,7 +151,7 @@ private final class NotARecorder: UIDriver, @unchecked Sendable {
         let driver = FakeRecorder(actionDuration: 0)
         let url = try scratch()
         try await recorder.start(on: driver, url: url, options: RecordOptions(maxDuration: 0.2))
-        try await Task.sleep(for: .milliseconds(600))
+        try await waitForTheLimit(driver)
         await recorder.abandon()
         #expect(!FileManager.default.fileExists(atPath: url.path))
         await #expect(throws: LoupeError.self) { _ = try await recorder.stop() }
