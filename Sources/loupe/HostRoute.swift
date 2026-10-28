@@ -78,6 +78,29 @@ enum HostRoute {
 
     // MARK: - Calls
 
+    /// Run `body` against `target`, held in a temporary host session when it is a
+    /// web page and `shared` says several calls must see one page. A web target is
+    /// a fresh page load per call, so without this a later step would act on a
+    /// reloaded page rather than the one the earlier steps left behind.
+    static func scoped<T>(
+        _ client: LoupeHostClient, target: Target, options: Loupe.Options, shared: Bool,
+        _ body: (Target) async throws -> T
+    ) async throws -> T {
+        guard shared, target.surface == .web else { return try await body(target) }
+        let name = "cli-\(UUID().uuidString.prefix(8).lowercased())"
+        var arguments = targetArguments(target, options)
+        arguments["name"] = .string(name)
+        _ = try await client.call("loupe_session_open", arguments)
+        do {
+            let result = try await body(try Target.parse("@\(name)"))
+            _ = try? await client.call("loupe_session_close", ["name": .string(name)])
+            return result
+        } catch {
+            _ = try? await client.call("loupe_session_close", ["name": .string(name)])
+            throw error
+        }
+    }
+
     /// Run steps one at a time on the host, since a tool call carries one of each
     /// kind. Returns what each said and the last screenshot.
     static func act(
@@ -101,19 +124,23 @@ extension Capture {
         if flags.annotate { throw HostRoute.unsupported("--annotate") }
         let parsed = try target.parsed()
         let options = target.options()
-        var image: Data?
         let pending = try actions.actions()
-        if !pending.isEmpty {
-            image = try await HostRoute.act(client, target: parsed, options: options, actions: pending).image
-        }
         let capture = flags.captureOptions()
-        var arguments = HostRoute.targetArguments(parsed, options)
-        arguments["fullPage"] = .bool(capture.fullPage)
-        arguments["settle"] = .bool(capture.settle)
-        arguments["scale"] = .double(options.scale)
-        if let region = flags.region { arguments["region"] = .string(region) }
-        let reply = try await client.call("loupe_capture", arguments)
-        guard let shot = reply.images.last ?? image else {
+        // The capture must see the page the steps left behind, so both share one.
+        let reply = try await HostRoute.scoped(
+            client, target: parsed, options: options, shared: !pending.isEmpty
+        ) { scoped in
+            if !pending.isEmpty {
+                _ = try await HostRoute.act(client, target: scoped, options: options, actions: pending)
+            }
+            var arguments = HostRoute.targetArguments(scoped, options)
+            arguments["fullPage"] = .bool(capture.fullPage)
+            arguments["settle"] = .bool(capture.settle)
+            arguments["scale"] = .double(options.scale)
+            if let region = flags.region { arguments["region"] = .string(region) }
+            return try await client.call("loupe_capture", arguments)
+        }
+        guard let shot = reply.images.last else {
             throw LoupeError.failed("the host returned no image")
         }
         let url = try Out.write(
@@ -142,8 +169,13 @@ extension Act {
         guard !pending.isEmpty else {
             throw ValidationError("No actions given. See `loupe act --help`.")
         }
-        let (lines, image) = try await HostRoute.act(
-            client, target: try target.parsed(), options: target.options(), actions: pending)
+        let parsed = try target.parsed()
+        let options = target.options()
+        let (lines, image) = try await HostRoute.scoped(
+            client, target: parsed, options: options, shared: pending.count > 1
+        ) { scoped in
+            try await HostRoute.act(client, target: scoped, options: options, actions: pending)
+        }
         lines.forEach { print($0) }
         if let image, let out {
             print(try Out.write(image, to: out, fallback: out).path)
@@ -179,6 +211,19 @@ extension Doctor {
         if request {
             print(try await client.call("loupe_request_access").text)
         }
-        print(try await client.call("loupe_doctor").text)
+        let text = try await client.call("loupe_doctor").text
+        // Same contract as the local command: a surface that is not usable is a
+        // failing exit status, not a printed report.
+        guard let data = text.data(using: .utf8),
+            let report = try? JSONDecoder().decode(Diagnostics.Report.self, from: data)
+        else {
+            print(text)
+            return
+        }
+        report.lines.forEach { print($0) }
+        if !report.allGood {
+            print("\nSome surfaces are unavailable. Fix the items marked ✗ above.")
+            throw ExitCode(1)
+        }
     }
 }
