@@ -26,7 +26,7 @@ let package = Package(
 
 		// Video in, animated GIF out: AVFoundation and ImageIO only. Kept out of
 		// LoupeCore so that stays free of platform frameworks.
-		.target(name: "LoupeMedia"),
+		.target(name: "LoupeMedia", dependencies: ["LoupeCore"]),
 
 		// Umbrella: target parsing -> driver resolution.
 		.target(name: "LoupeKit", dependencies: ["LoupeCore", "LoupeWeb", "LoupeMac", "LoupeSim"]),

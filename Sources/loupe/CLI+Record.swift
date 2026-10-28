@@ -41,6 +41,25 @@ struct Record: AsyncParsableCommand {
     @Option(help: "Seconds to wait for `--until`.")
     var timeout: Double = 30
 
+    @Option(
+        help: """
+            Keep only part of the screen, as x,y,w,h in points — the same space as \
+            `capture --region`: origin at the top-left, x right, y down, the units \
+            `describe` reports. Pixels are points × the device scale. Must lie inside \
+            the screen. Cropped when the video is encoded, since simctl films it all.
+            """)
+    var region: String?
+
+    @Option(
+        help: """
+            Keep only this element (handle, identifier or label), cropped to its frame \
+            from `describe` as read when recording starts. Clamped to the screen.
+            """)
+    var element: String?
+
+    @Option(help: "Points added around `--element` on every side.")
+    var padding: Double = 8
+
     @Option(help: "How long to keep recording after the actions finish, e.g. 500ms.")
     var tail: String = "500ms"
 
@@ -52,6 +71,17 @@ struct Record: AsyncParsableCommand {
         let pending = try actions.actions()
         if duration != nil, until != nil {
             throw ValidationError("--duration and --until are alternatives; give one.")
+        }
+        if region != nil, element != nil {
+            throw ValidationError("--region and --element are alternatives; give one.")
+        }
+        let kept: RecordRegion?
+        if let region {
+            kept = .frame(try RecordCrop.parse(region))
+        } else if let element {
+            kept = .element(element, padding: padding)
+        } else {
+            kept = nil
         }
         let stop: RecordStop
         if let until {
@@ -87,7 +117,7 @@ struct Record: AsyncParsableCommand {
 
         let task = Task {
             try await Loupe.record(
-                parsed, to: rawURL, options: target.options(), actions: pending, stop: stop)
+                parsed, to: rawURL, options: target.options(), region: kept, actions: pending, stop: stop)
         }
         // Ctrl-C finalizes the recording instead of killing it mid-write.
         signal(SIGINT, SIG_IGN)
@@ -96,9 +126,10 @@ struct Record: AsyncParsableCommand {
         interrupt.resume()
         let result = try await task.value
         interrupt.cancel()
+        let crop = result.region.flatMap { frame in result.scale.map { ScreenCrop(region: frame, scale: $0) } }
 
         do {
-            let transcoded = try await ScreenContentTranscoder.transcode(from: rawURL, to: videoURL)
+            let transcoded = try await ScreenContentTranscoder.transcode(from: rawURL, to: videoURL, crop: crop)
             FileHandle.standardError.write(
                 Data(
                     "h264: \(transcoded.writtenFrames) of \(transcoded.sourceFrames) frames written (variable frame rate)\n"
@@ -108,7 +139,7 @@ struct Record: AsyncParsableCommand {
             try? FileManager.default.removeItem(at: videoURL)
             try FileManager.default.copyItem(at: rawURL, to: videoURL)
             FileHandle.standardError.write(
-                Data("note: could not optimize the video (\(error.localizedDescription)); kept the original encode\n".utf8))
+                Data("note: could not optimize the video (\(error.localizedDescription)); kept the original encode\(crop == nil ? "" : ", NOT cropped")\n".utf8))
         }
         if !gifOnly { print(videoURL.path) }
         FileHandle.standardError.write(

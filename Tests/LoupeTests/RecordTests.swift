@@ -85,4 +85,54 @@ import Testing
     @Test func maxDurationCannotExceedTheHardLimit() {
         #expect(RecordOptions(maxDuration: 9999).maxDuration == RecordOptions.hardLimit)
     }
+
+    // MARK: crop math
+
+    @Test func regionParsingIsStrict() throws {
+        let frame = try RecordCrop.parse("10, 20,300,40.5")
+        #expect(frame == Frame(x: 10, y: 20, width: 300, height: 40.5))
+        #expect(throws: LoupeError.self) { try RecordCrop.parse("1,2,3") }
+        #expect(throws: LoupeError.self) { try RecordCrop.parse("1,2,3,x") }
+    }
+
+    @Test func pointsBecomePixelsFromTheTopLeft() throws {
+        // 390×844 pt at 3x is 1170×2532 px.
+        let rect = try RecordCrop.pixelRect(
+            Frame(x: 10, y: 100, width: 200, height: 50), scale: 3, pixelWidth: 1170, pixelHeight: 2532)
+        #expect(rect == CGRect(x: 30, y: 300, width: 600, height: 150))
+    }
+
+    @Test func pixelRectsSnapOutwardToEvenSizes() throws {
+        let rect = try RecordCrop.pixelRect(
+            Frame(x: 0.5, y: 0.5, width: 10, height: 10), scale: 3, pixelWidth: 1170, pixelHeight: 2532)
+        #expect(Int(rect.minX) % 2 == 0 && Int(rect.minY) % 2 == 0)
+        #expect(Int(rect.width) % 2 == 0 && Int(rect.height) % 2 == 0)
+        // Outward: the 1.5…31.5 px span is still covered.
+        #expect(rect.minX <= 1.5 && rect.maxX >= 31.5)
+    }
+
+    @Test func regionsOutsideTheScreenAreRejected() {
+        for region in [
+            Frame(x: 300, y: 0, width: 200, height: 50), Frame(x: -20, y: 0, width: 50, height: 50),
+            Frame(x: 0, y: 800, width: 50, height: 100), Frame(x: 0, y: 0, width: 0, height: 10),
+        ] {
+            #expect(throws: LoupeError.self) {
+                try RecordCrop.pixelRect(region, scale: 3, pixelWidth: 1170, pixelHeight: 2532)
+            }
+        }
+    }
+
+    @Test func fullScreenIsAValidRegion() throws {
+        let rect = try RecordCrop.pixelRect(
+            Frame(x: 0, y: 0, width: 390, height: 844), scale: 3, pixelWidth: 1170, pixelHeight: 2532)
+        #expect(rect == CGRect(x: 0, y: 0, width: 1170, height: 2532))
+    }
+
+    @Test func paddingGrowsAndClampingKeepsTheScreen() throws {
+        let grown = RecordCrop.padded(Frame(x: 4, y: 4, width: 100, height: 40), by: 8)
+        #expect(grown == Frame(x: -4, y: -4, width: 116, height: 56))
+        let kept = try #require(RecordCrop.clamped(grown, toWidth: 390, height: 844))
+        #expect(kept == Frame(x: 0, y: 0, width: 112, height: 52))
+        #expect(RecordCrop.clamped(Frame(x: 500, y: 0, width: 10, height: 10), toWidth: 390, height: 844) == nil)
+    }
 }

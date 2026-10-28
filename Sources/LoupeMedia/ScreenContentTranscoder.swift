@@ -2,6 +2,7 @@ import AVFoundation
 import CoreGraphics
 import CoreMedia
 import Foundation
+import LoupeCore
 import VideoToolbox
 
 public struct TranscodeResult: Sendable {
@@ -11,6 +12,17 @@ public struct TranscodeResult: Sendable {
     public var writtenFrames: Int
 }
 
+/// A part of the screen to keep: points, origin top-left (see ``RecordCrop``).
+public struct ScreenCrop: Sendable {
+    public var region: Frame
+    public var scale: Double
+
+    public init(region: Frame, scale: Double) {
+        self.region = region
+        self.scale = scale
+    }
+}
+
 /// Re-encodes a screen recording for what a screen actually is: long stretches of
 /// nothing, punctuated by sharp text.
 ///
@@ -18,7 +30,7 @@ public struct TranscodeResult: Sendable {
 ///   screen-content tools but no VideoToolbox encoder and no broad playback.
 /// - Variable frame rate: a sample is written only when the frame changed, using
 ///   the same detector as the GIF path, and the last one is held to the end.
-/// - Native resolution; UI text does not survive downscaling.
+/// - Native resolution, optionally cropped to a region; UI text does not survive downscaling.
 /// - High quality (0.85) rather than a bitrate, so text edges stay clean.
 public enum ScreenContentTranscoder {
     /// Stricter than the GIF default: a video keeps subtle changes, a GIF is
@@ -28,7 +40,8 @@ public enum ScreenContentTranscoder {
     public static let quality = 0.85
 
     public static func transcode(
-        from source: URL, to destination: URL, threshold: Double = defaultThreshold
+        from source: URL, to destination: URL, crop: ScreenCrop? = nil,
+        threshold: Double = defaultThreshold
     ) async throws -> TranscodeResult {
         let asset = AVURLAsset(url: source)
         guard let track = try await asset.loadTracks(withMediaType: .video).first else {
@@ -37,9 +50,18 @@ public enum ScreenContentTranscoder {
         let duration = try await asset.load(.duration)
         let size = try await track.load(.naturalSize)
         let transform = try await track.load(.preferredTransform)
-        let width = Int(size.width.rounded())
-        let height = Int(size.height.rounded())
-        guard width > 0, height > 0 else { throw MediaError.noFrames }
+        let sourceWidth = Int(size.width.rounded())
+        let sourceHeight = Int(size.height.rounded())
+        guard sourceWidth > 0, sourceHeight > 0 else { throw MediaError.noFrames }
+        let rect: CGRect
+        if let crop {
+            rect = try RecordCrop.pixelRect(
+                crop.region, scale: crop.scale, pixelWidth: sourceWidth, pixelHeight: sourceHeight)
+        } else {
+            rect = CGRect(x: 0, y: 0, width: sourceWidth, height: sourceHeight)
+        }
+        let width = Int(rect.width)
+        let height = Int(rect.height)
 
         let reader = try AVAssetReader(asset: asset)
         let output = AVAssetReaderTrackOutput(
@@ -91,8 +113,9 @@ public enum ScreenContentTranscoder {
         var written = 0
         var lastKept: (pixels: CVPixelBuffer, time: CMTime)?
         while let sample = output.copyNextSampleBuffer() {
-            guard let pixels = CMSampleBufferGetImageBuffer(sample) else { continue }
+            guard let full = CMSampleBufferGetImageBuffer(sample) else { continue }
             sourceFrames += 1
+            let pixels = crop == nil ? full : try cropped(full, to: rect, pool: adaptor.pixelBufferPool)
             var image: CGImage?
             VTCreateCGImageFromCVPixelBuffer(pixels, options: nil, imageOut: &image)
             // A frame that cannot be inspected is kept, not guessed at.
@@ -131,5 +154,39 @@ public enum ScreenContentTranscoder {
                 writer.error?.localizedDescription ?? "the encoder wrote no frames")
         }
         return TranscodeResult(sourceFrames: sourceFrames, writtenFrames: written)
+    }
+}
+
+extension ScreenContentTranscoder {
+    /// Copies `rect` out of a 32-bit BGRA buffer, row by row.
+    static func cropped(_ source: CVPixelBuffer, to rect: CGRect, pool: CVPixelBufferPool?) throws
+        -> CVPixelBuffer {
+        let width = Int(rect.width)
+        let height = Int(rect.height)
+        var made: CVPixelBuffer?
+        if let pool {
+            CVPixelBufferPoolCreatePixelBuffer(nil, pool, &made)
+        } else {
+            CVPixelBufferCreate(nil, width, height, kCVPixelFormatType_32BGRA, nil, &made)
+        }
+        guard let target = made else { throw MediaError.encodeFailed("could not allocate a frame") }
+        CVPixelBufferLockBaseAddress(source, .readOnly)
+        CVPixelBufferLockBaseAddress(target, [])
+        defer {
+            CVPixelBufferUnlockBaseAddress(target, [])
+            CVPixelBufferUnlockBaseAddress(source, .readOnly)
+        }
+        guard let from = CVPixelBufferGetBaseAddress(source),
+            let to = CVPixelBufferGetBaseAddress(target)
+        else { throw MediaError.encodeFailed("could not map a frame") }
+        let fromStride = CVPixelBufferGetBytesPerRow(source)
+        let toStride = CVPixelBufferGetBytesPerRow(target)
+        let originX = Int(rect.minX)
+        let originY = Int(rect.minY)
+        for row in 0..<height {
+            memcpy(
+                to + row * toStride, from + (originY + row) * fromStride + originX * 4, width * 4)
+        }
+        return target
     }
 }

@@ -448,6 +448,23 @@ loupe record sim:booted --until 'Dashboard|!Invalid password'
 loupe record sim:booted --out run.mp4                    # no actions: runs until Ctrl-C, file is finalized
 ```
 
+To record only part of the screen and cut the file size, give `--region x,y,w,h` or
+`--element <handle|label>` (with `--padding N`, default 8 pt):
+
+```
+loupe record sim:booted --element Login --padding 12 --press Login --out button.mp4
+loupe record sim:booted --region 0,100,390,200 --duration 5s
+```
+
+`--region` uses the same space as `capture --region` and `describe` frames: **points**,
+origin at the **top-left** of the screen, x to the right, y downward. Pixels are points
+times the device scale (3.0 on most iPhones, 2.0 on iPads). It must lie inside the screen,
+otherwise recording refuses to start. `--element` takes the element's frame as `describe`
+reports it when recording starts, grows it by the padding, and clamps it to the screen.
+simctl always films the whole screen, so the crop is applied while the video is re-encoded
+(and so carries into the GIF). The crop is snapped outward to even pixel sizes, which H.264
+requires. A later Mac recorder will use `SCStreamConfiguration.sourceRect` for the same options.
+
 MP4 (H.264) is the primary format: GitHub and GitLab take it as an attachment, and
 X requires it. It is re-encoded for screen content after recording: H.264 High profile,
 variable frame rate (a sample is written only when the screen changed, so a still
