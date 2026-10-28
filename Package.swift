@@ -60,6 +60,6 @@ let package = Package(
 				.product(name: "ArgumentParser", package: "swift-argument-parser"),
 			]),
 
-		.testTarget(name: "LoupeTests", dependencies: ["LoupeKit", "LoupeXCUI", "LoupeMCP", "LoupeMedia"]),
+		.testTarget(name: "LoupeTests", dependencies: ["LoupeKit", "LoupeXCUI", "LoupeMCP", "LoupeMedia", "LoupeMac"]),
 	]
 )

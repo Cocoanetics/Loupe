@@ -27,9 +27,15 @@ extension Loupe {
         stop: RecordStop
     ) async throws -> RecordingResult {
         // Before withDriver, which would load a page or boot a device for nothing.
-        guard target.surface == .sim else {
+        guard target.surface == .sim || target.surface == .mac else {
             throw LoupeError.unsupported(
-                "recording works on sim: targets for now — mac: and web: are not implemented yet")
+                "recording works on sim: and mac: targets for now — web: is not implemented yet")
+        }
+        // A window's frames are in global screen points but the movie holds only the
+        // window, so a crop region would need translating first.
+        if target.surface == .mac, region != nil {
+            throw LoupeError.unsupported(
+                "--region and --element are not supported for mac: windows yet; the recording is of the whole window")
         }
         return try await withDriver(target, options: options) { driver in
             try await recordSession(

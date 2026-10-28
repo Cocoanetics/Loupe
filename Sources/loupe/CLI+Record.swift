@@ -8,11 +8,12 @@ import LoupeMedia
 struct Record: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "record",
-        abstract: "Record a simulator to video, optionally as an animated GIF.",
+        abstract: "Record a simulator or Mac window to video, optionally as an animated GIF.",
         discussion: """
             Records while the actions run, keeps going for a short tail, then stops:
 
               loupe record sim:booted --press Login --out tap.mp4
+              loupe record mac:Notes --duration 5s --out notes.mp4
 
             With no actions, give `--duration` or `--until`, or press Ctrl-C to stop; \
             the file is finalized either way. Nothing runs longer than \(Int(RecordOptions.hardLimit)) seconds.
