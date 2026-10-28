@@ -2,8 +2,46 @@ import CoreGraphics
 import Foundation
 import ImageIO
 import LoupeCore
-import LoupeMedia
+@testable import LoupeKit
+@testable import LoupeMedia
 import Testing
+
+/// A recorder that films nothing and says what was asked of it.
+private final class FakeRecorder: RecordingDriver, @unchecked Sendable {
+    let targetDescription = "fake"
+    let actionDuration: Double
+    private let lock = NSLock()
+    private var stops = 0
+
+    init(actionDuration: Double) { self.actionDuration = actionDuration }
+
+    var stopCount: Int { lock.withLock { stops } }
+
+    func capture(_ options: CaptureOptions) async throws -> Capture {
+        throw LoupeError.unsupported("fake")
+    }
+
+    func describe(_ options: DescribeOptions) async throws -> [UINode] { [] }
+
+    func perform(_ action: UIAction) async throws -> ActionResult {
+        try await Task.sleep(for: .seconds(actionDuration))
+        return ActionResult(message: "done")
+    }
+
+    func startRecording(to url: URL, options: RecordOptions) async throws -> any RecordingHandle {
+        Handle(owner: self, url: url)
+    }
+
+    private struct Handle: RecordingHandle {
+        let owner: FakeRecorder
+        let url: URL
+
+        func stop() async throws -> RecordingResult {
+            owner.lock.withLock { owner.stops += 1 }
+            return RecordingResult(url: url, duration: 0, bytes: 1)
+        }
+    }
+}
 
 @Suite struct RecordTests {
     private func solid(_ gray: UInt8, size: Int = 64) -> CGImage {
@@ -21,29 +59,29 @@ import Testing
         grays.enumerated().map { TimedFrame(image: solid($1), time: Double($0) * step) }
     }
 
-    @Test func identicalFramesCollapseIntoOneLongHold() {
-        let held = FrameCollapser.collapse(
+    @Test func identicalFramesCollapseIntoOneLongHold() throws {
+        let held = try FrameCollapser.collapse(
             frames([10, 10, 10, 10, 200]), endTime: 0.5, threshold: 0.002)
         #expect(held.count == 2)
         #expect(abs(held[0].delay - 0.4) < 0.001)
         #expect(abs(held[1].delay - 0.1) < 0.001)
     }
 
-    @Test func slowDriftIsComparedAgainstTheLastKeptFrame() {
+    @Test func slowDriftIsComparedAgainstTheLastKeptFrame() throws {
         // Each step is 1/255 apart (0.4%) but the threshold is 1%: comparing
         // neighbours would keep one frame, comparing to the kept frame keeps more.
-        let held = FrameCollapser.collapse(
+        let held = try FrameCollapser.collapse(
             frames([100, 101, 102, 103, 104, 105]), endTime: 0.6, threshold: 0.01)
         #expect(held.count > 1)
         #expect(abs(held.map(\.delay).reduce(0, +) - 0.6) < 0.001)
     }
 
-    @Test func delaysAreClamped() {
-        let held = FrameCollapser.collapse(
+    @Test func delaysAreClamped() throws {
+        let held = try FrameCollapser.collapse(
             [TimedFrame(image: solid(0), time: 0), TimedFrame(image: solid(255), time: 0.001)],
             endTime: 0.002, threshold: 0.002)
         #expect(held.allSatisfy { $0.delay >= FrameCollapser.minDelay })
-        let long = FrameCollapser.collapse(frames([5]), endTime: 5000, threshold: 0.002)
+        let long = try FrameCollapser.collapse(frames([5]), endTime: 5000, threshold: 0.002)
         #expect(long[0].delay == FrameCollapser.maxDelay)
     }
 
@@ -134,5 +172,70 @@ import Testing
         let kept = try #require(RecordCrop.clamped(grown, toWidth: 390, height: 844))
         #expect(kept == Frame(x: 0, y: 0, width: 112, height: 52))
         #expect(RecordCrop.clamped(Frame(x: 500, y: 0, width: 10, height: 10), toWidth: 390, height: 844) == nil)
+    }
+
+    // MARK: bounds
+
+    @Test func theCapCoversActionsThatRunLongerThanIt() async throws {
+        let recorder = FakeRecorder(actionDuration: 3)
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("fake-\(UUID()).mp4")
+        let started = Date()
+        await #expect(throws: LoupeError.self) {
+            _ = try await Loupe.recordSession(
+                on: recorder,
+                Loupe.Session(
+                    url: url, record: RecordOptions(maxDuration: 0.3), region: nil,
+                    actions: [.navigate("x")], stop: .after(0.1)))
+        }
+        #expect(Date().timeIntervalSince(started) < 2)
+        // Whatever went wrong, the recording was still stopped.
+        #expect(recorder.stopCount == 1)
+    }
+
+    @Test func theClosingWaitGetsOnlyWhatTheActionsLeft() async throws {
+        let recorder = FakeRecorder(actionDuration: 0.25)
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("fake-\(UUID()).mp4")
+        let started = Date()
+        _ = try await Loupe.recordSession(
+            on: recorder,
+            Loupe.Session(
+                url: url, record: RecordOptions(maxDuration: 0.4), region: nil,
+                actions: [.navigate("x")], stop: .after(5)))
+        // 0.25s of action plus at most the remaining 0.15s, not a full 5s tail.
+        #expect(Date().timeIntervalSince(started) < 2)
+        #expect(recorder.stopCount == 1)
+    }
+
+    // MARK: streaming conversion
+
+    @Test func conversionHoldsOneFrameNoMatterHowLongTheClip() async throws {
+        let still = solid(40)
+        let moved = solid(220)
+        var pulled = 0
+        let result = try await VideoConverter.encode(
+            sampleCount: 500, duration: 50, options: GIFOptions(threshold: 0.002)
+        ) { index in
+            pulled += 1
+            return TimedFrame(image: index >= 250 ? moved : still, time: Double(index) * 0.1)
+        }
+        #expect(pulled == 500)
+        #expect(result.sampledFrames == 500)
+        #expect(result.keptFrames == 2)
+        // The pending frame is the only one kept: 1, not 500.
+        #expect(result.peakRetainedFrames == 1)
+        let source = try #require(CGImageSourceCreateWithData(result.data as CFData, nil))
+        #expect(CGImageSourceGetCount(source) == 2)
+    }
+
+    @Test func conversionSkipsSamplesThatCouldNotBeRead() async throws {
+        let result = try await VideoConverter.encode(
+            sampleCount: 4, duration: 4, options: GIFOptions()
+        ) { index in
+            index == 1 ? nil : TimedFrame(image: self.solid(UInt8(index * 80)), time: Double(index))
+        }
+        #expect(result.sampledFrames == 3)
+        await #expect(throws: MediaError.self) {
+            _ = try await VideoConverter.encode(sampleCount: 2, duration: 2, options: GIFOptions()) { _ in nil }
+        }
     }
 }

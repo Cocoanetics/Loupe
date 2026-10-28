@@ -26,6 +26,8 @@ public struct GIFResult: Sendable {
     /// Frames in the GIF after still ones were folded together.
     public var keptFrames: Int
     public var duration: TimeInterval
+    /// Most frames held in memory at once while converting.
+    public var peakRetainedFrames: Int
 }
 
 public enum VideoConverter {
@@ -58,7 +60,6 @@ public enum VideoConverter {
 
         let count = min(max(1, Int((duration * options.fps).rounded(.up))), maxSamples)
         let step = duration / Double(count)
-        let times = (0..<count).map { CMTime(seconds: Double($0) * step, preferredTimescale: 600) }
 
         let generator = AVAssetImageGenerator(asset: asset)
         generator.appliesPreferredTrackTransform = true
@@ -69,19 +70,38 @@ public enum VideoConverter {
         generator.requestedTimeToleranceBefore = slack
         generator.requestedTimeToleranceAfter = slack
 
-        var frames: [TimedFrame] = []
-        for await result in generator.images(for: times) {
+        return try await encode(sampleCount: count, duration: duration, options: options) { index in
+            let time = CMTime(seconds: Double(index) * step, preferredTimescale: 600)
             // A frame that fails to decode is skipped; the previous one is held.
-            if case .success(let requested, let image, _) = result {
-                frames.append(TimedFrame(image: image, time: requested.seconds))
-            }
+            guard let image = try? await generator.image(at: time).image else { return nil }
+            return TimedFrame(image: image, time: time.seconds)
         }
-        frames.sort { $0.time < $1.time }
-        guard !frames.isEmpty else { throw MediaError.noFrames }
+    }
 
-        let held = FrameCollapser.collapse(frames, endTime: duration, threshold: options.threshold)
-        let data = try GIFEncoder.encode(held, loop: options.loop)
+    /// Pulls `sampleCount` frames one by one from `frame` and collapses them as
+    /// they arrive, so memory holds one frame, not the clip. A nil frame is a
+    /// sample that could not be read.
+    static func encode(
+        sampleCount: Int, duration: TimeInterval, options: GIFOptions,
+        frame: (Int) async throws -> TimedFrame?
+    ) async throws -> GIFResult {
+        // The count is only known after collapsing, but the encoder wants it up
+        // front; the sample count is the most it can be.
+        let encoder = try GIFEncoder.Stream(frameCount: sampleCount, loop: options.loop)
+        var stream = FrameCollapser.Stream(threshold: options.threshold) { encoder.add($0) }
+        var sampled = 0
+        var peak = 0
+        for index in 0..<sampleCount {
+            guard let next = try await frame(index) else { continue }
+            sampled += 1
+            try stream.add(next)
+            peak = max(peak, stream.retainedFrames)
+        }
+        guard sampled > 0 else { throw MediaError.noFrames }
+        try stream.finish(endTime: duration)
+        let data = try encoder.finalize()
         return GIFResult(
-            data: data, sampledFrames: frames.count, keptFrames: held.count, duration: duration)
+            data: data, sampledFrames: sampled, keptFrames: encoder.frameCount, duration: duration,
+            peakRetainedFrames: peak)
     }
 }

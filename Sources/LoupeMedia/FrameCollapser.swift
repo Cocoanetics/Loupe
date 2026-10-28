@@ -62,19 +62,51 @@ public enum FrameCollapser {
     ///     frame counts as unchanged.
     public static func collapse(
         _ frames: [TimedFrame], endTime: TimeInterval, threshold: Double
-    ) -> [HeldFrame] {
-        var kept: [TimedFrame] = []
-        var detector = FrameChangeDetector(threshold: threshold)
-        for frame in frames where detector.isChange(frame.image) {
-            kept.append(frame)
+    ) throws -> [HeldFrame] {
+        let collected = Collected()
+        var stream = Stream(threshold: threshold) { collected.frames.append($0) }
+        for frame in frames { try stream.add(frame) }
+        try stream.finish(endTime: endTime)
+        return collected.frames
+    }
+
+    private final class Collected: @unchecked Sendable {
+        var frames: [HeldFrame] = []
+    }
+
+    /// Collapses frames as they arrive, so a caller decoding a long clip never
+    /// holds more than one frame: the last kept one, waiting for the next change
+    /// to say how long it stays on screen. Each frame is handed to `sink` the
+    /// moment its hold is known.
+    public struct Stream {
+        private var detector: FrameChangeDetector
+        private var pending: TimedFrame?
+        private let sink: (HeldFrame) throws -> Void
+
+        public init(threshold: Double, sink: @escaping (HeldFrame) throws -> Void) {
+            detector = FrameChangeDetector(threshold: threshold)
+            self.sink = sink
         }
-        var held: [HeldFrame] = []
-        for (index, frame) in kept.enumerated() {
-            let next = index + 1 < kept.count ? kept[index + 1].time : endTime
-            let delay = min(max(next - frame.time, minDelay), maxDelay)
-            held.append(HeldFrame(image: frame.image, delay: delay))
+
+        /// Frames held in memory by this stream: 0 before the first, then 1.
+        public var retainedFrames: Int { pending == nil ? 0 : 1 }
+
+        public mutating func add(_ frame: TimedFrame) throws {
+            guard detector.isChange(frame.image) else { return }
+            try flush(until: frame.time)
+            pending = frame
         }
-        return held
+
+        public mutating func finish(endTime: TimeInterval) throws {
+            try flush(until: endTime)
+            pending = nil
+        }
+
+        private func flush(until time: TimeInterval) throws {
+            guard let pending else { return }
+            let delay = min(max(time - pending.time, FrameCollapser.minDelay), FrameCollapser.maxDelay)
+            try sink(HeldFrame(image: pending.image, delay: delay))
+        }
     }
 
     /// Width of the grayscale thumbnail frames are compared on.
