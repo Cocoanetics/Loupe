@@ -417,8 +417,8 @@ public actor LoupeMCPServer {
     /// - Parameter afterPath: Path to the later image.
     @MCPTool(readOnlyHint: true)
     public func loupe_compare(beforePath: String, afterPath: String) async throws -> MCPImage {
-        let beforeImage = try Data(contentsOf: URL(fileURLWithPath: beforePath))
-        let afterImage = try Data(contentsOf: URL(fileURLWithPath: afterPath))
+        let beforeImage = try Data(contentsOf: LoupeCallContext.resolve(beforePath))
+        let afterImage = try Data(contentsOf: LoupeCallContext.resolve(afterPath))
         let report = try ImageOps.diff(before: beforeImage, after: afterImage)
         let composite = try ImageOps.sideBySide(
             before: beforeImage, after: afterImage, report: report, caption: report.summary)

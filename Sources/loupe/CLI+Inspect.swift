@@ -13,6 +13,7 @@ struct List: AsyncParsableCommand {
     var json = false
 
     func run() async throws {
+        if let client = try HostRoute.client() { return try await runOnHost(client) }
         let inventory = try await Inventory.collect()
         if json {
             print(try Out.json(inventory))
@@ -128,6 +129,7 @@ struct Doctor: AsyncParsableCommand {
     var json = false
 
     func run() async throws {
+        if let client = try HostRoute.client() { return try await runOnHost(client) }
         let requested = request ? await Diagnostics.requestAccess() : nil
 
         var report = await Diagnostics.run()

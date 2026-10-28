@@ -229,7 +229,7 @@ extension LoupeMCPServer {
                 }
                 return (source, "<script>")
             case (nil, let path?):
-                let url = URL(fileURLWithPath: (path as NSString).expandingTildeInPath)
+                let url = LoupeCallContext.resolve(path)
                 guard let text = try? String(contentsOf: url, encoding: .utf8) else {
                     throw LoupeError.failed("cannot read a script at \(url.path)")
                 }
@@ -241,9 +241,10 @@ extension LoupeMCPServer {
         }
     }
 
-    /// A tilde-friendly directory argument.
+    /// A tilde-friendly directory argument, falling back to the host's evidence
+    /// directory when the call names none.
     static func directory(_ path: String?) -> URL? {
-        path.map { URL(fileURLWithPath: ($0 as NSString).expandingTildeInPath) }
+        path.map { LoupeCallContext.resolve($0) } ?? LoupeCallContext.current.evidenceDirectory
     }
 }
 

@@ -72,6 +72,7 @@ struct LoupeCommand: AsyncParsableCommand {
         }
         do {
             var command = try parseAsRoot()
+            try HostRoute.check(command)
             if var asyncCommand = command as? AsyncParsableCommand {
                 try await asyncCommand.run()
             } else {
