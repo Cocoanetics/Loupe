@@ -97,4 +97,36 @@ struct LoupeToolsTests {
         #expect(LoupeHost.carriesSecrets(["loupe", "set", "pw", "{{PASSWORD}}"]))
         #expect(!LoupeHost.carriesSecrets(["loupe", "press", "Save"]))
     }
+
+    @Test func tokenOnlyTravelsToLoopbackOrHTTPS() throws {
+        func configure(_ url: String, token: String? = "secret") throws -> LoupeHost? {
+            var environment = ["LOUPE_HOST": url]
+            environment["LOUPE_HOST_TOKEN"] = token
+            return try LoupeHost.configured(environment: environment)
+        }
+        #expect(try configure("http://127.0.0.1:9000/mcp") != nil)
+        #expect(try configure("http://localhost:9000/mcp") != nil)
+        #expect(try configure("http://[::1]:9000/mcp") != nil)
+        #expect(try configure("https://mc.example/mcp") != nil)
+        #expect(try configure("http://mc.example/mcp", token: nil) != nil)
+        #expect(throws: (any Error).self) { _ = try configure("http://mc.lan:9000/mcp") }
+        #expect(throws: (any Error).self) { _ = try configure("http://192.168.1.5:9000/mcp") }
+    }
+
+    @Test func hostedDoctorKeepsJSONAndStatus() {
+        func report(allGood: Bool) -> String {
+            "{\"surfaces\":[],\"lines\":[\"Accessibility ✗\"],\"allGood\":\(allGood)}"
+        }
+        let bad = report(allGood: false)
+        let asJSON = LoupeHost.doctorOutput(bad, json: true)
+        #expect(asJSON.lines == [bad])
+        #expect(asJSON.allGood == false)
+
+        let asText = LoupeHost.doctorOutput(bad, json: false)
+        #expect(asText.lines == ["Accessibility ✗"])
+        #expect(asText.allGood == false)
+
+        #expect(LoupeHost.doctorOutput(report(allGood: true), json: true).allGood == true)
+        #expect(LoupeHost.doctorOutput("not json", json: true).allGood == nil)
+    }
 }

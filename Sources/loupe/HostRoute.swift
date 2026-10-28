@@ -208,21 +208,16 @@ extension List {
 
 extension Doctor {
     func runOnHost(_ client: LoupeHostClient) async throws {
-        if request {
+        if request, !json {
             print(try await client.call("loupe_request_access").text)
         }
         let text = try await client.call("loupe_doctor").text
         // Same contract as the local command: a surface that is not usable is a
         // failing exit status, not a printed report.
-        guard let data = text.data(using: .utf8),
-            let report = try? JSONDecoder().decode(Diagnostics.Report.self, from: data)
-        else {
-            print(text)
-            return
-        }
-        report.lines.forEach { print($0) }
-        if !report.allGood {
-            print("\nSome surfaces are unavailable. Fix the items marked ✗ above.")
+        let (lines, allGood) = LoupeHost.doctorOutput(text, json: json)
+        lines.forEach { print($0) }
+        if allGood == false {
+            if !json { print("\nSome surfaces are unavailable. Fix the items marked ✗ above.") }
             throw ExitCode(1)
         }
     }

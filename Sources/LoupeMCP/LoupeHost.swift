@@ -46,6 +46,16 @@ public struct LoupeHost: Sendable {
         arguments.contains { $0.contains("{{") }
     }
 
+    /// What a hosted `doctor` prints for the host's `loupe_doctor` answer, and
+    /// whether the report says every surface is usable. With `json` the host's
+    /// own JSON is passed through, the same shape as the local `--json`.
+    public static func doctorOutput(_ text: String, json: Bool) -> (lines: [String], allGood: Bool?) {
+        guard let data = text.data(using: .utf8),
+            let report = try? JSONDecoder().decode(Diagnostics.Report.self, from: data)
+        else { return ([text], nil) }
+        return (json ? [text] : report.lines, report.allGood)
+    }
+
     /// The host named by the environment, `nil` when running standalone.
     public static func configured(
         environment: [String: String] = ProcessInfo.processInfo.environment
@@ -59,9 +69,15 @@ public struct LoupeHost: Sendable {
             throw LoupeError.failed(
                 "LOUPE_HOST must be the host's MCP URL (http:// or https://), got '\(raw)'")
         }
-        return LoupeHost(
+        let host = LoupeHost(
             url: url, toolPrefix: environment["LOUPE_HOST_PREFIX"] ?? "",
             token: try token(environment))
+        if host.token != nil, !host.allowsSecrets {
+            throw LoupeError.failed(
+                "refusing to send the LOUPE_HOST token to \(url.absoluteString): a bearer token "
+                    + "may only go to a loopback host or an https:// one")
+        }
+        return host
     }
 }
 
