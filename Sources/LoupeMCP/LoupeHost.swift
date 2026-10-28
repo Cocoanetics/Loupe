@@ -69,11 +69,8 @@ extension LoupeHost {
     /// `LOUPE_HOST_TOKEN`, else the contents of the file `LOUPE_HOST_TOKEN_FILE`
     /// names. Error text names the file, never the token.
     static func token(_ environment: [String: String]) throws -> String? {
-        if let direct = environment["LOUPE_HOST_TOKEN"]?.trimmingCharacters(in: .whitespacesAndNewlines),
-            !direct.isEmpty
-        {
-            return direct
-        }
+        let direct = environment["LOUPE_HOST_TOKEN"]?.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let direct, !direct.isEmpty { return direct }
         guard let path = environment["LOUPE_HOST_TOKEN_FILE"], !path.isEmpty else { return nil }
         let url = URL(fileURLWithPath: (path as NSString).expandingTildeInPath)
         guard let text = try? String(contentsOf: url, encoding: .utf8) else {
@@ -118,7 +115,7 @@ public actor LoupeHostClient {
         let request = JSONRPCMessage.request(
             id: .string(UUID().uuidString), method: "tools/call",
             params: .object([
-                "name": .string(host.toolPrefix + tool), "arguments": .object(arguments),
+                "name": .string(host.toolPrefix + tool), "arguments": .object(arguments)
             ]))
         let response = try await forward(request)
         let result: JSONDictionary
@@ -133,6 +130,15 @@ public actor LoupeHostClient {
             default:
                 throw LoupeError.failed("host sent an unexpected answer to \(tool)")
         }
+        let (joined, images) = Self.content(of: result)
+        if result["isError"]?.boolValue == true {
+            throw LoupeError.failed(joined.isEmpty ? "\(tool) failed on the host" : joined)
+        }
+        return LoupeHostReply(text: joined, images: images)
+    }
+
+    /// The text and images of a tool result's content blocks.
+    private static func content(of result: JSONDictionary) -> (text: String, images: [Data]) {
         var text: [String] = []
         var images: [Data] = []
         for block in result["content"]?.arrayValue ?? [] {
@@ -147,11 +153,7 @@ public actor LoupeHostClient {
                 default: break
             }
         }
-        let joined = text.joined(separator: "\n")
-        if result["isError"]?.boolValue == true {
-            throw LoupeError.failed(joined.isEmpty ? "\(tool) failed on the host" : joined)
-        }
-        return LoupeHostReply(text: joined, images: images)
+        return (text.joined(separator: "\n"), images)
     }
 
     public func disconnect() async {
@@ -179,7 +181,7 @@ public final class LoupeRelayServer: MCPServer, Sendable {
                     result: [
                         "protocolVersion": .string(asked ?? "2025-06-18"),
                         "capabilities": ["tools": [:]],
-                        "serverInfo": ["name": "loupe", "version": "0.1.0"],
+                        "serverInfo": ["name": "loupe", "version": "0.1.0"]
                     ])
             case "ping":
                 return .response(id: request.id, result: [:])

@@ -81,9 +81,9 @@ public final class LoupeTools: MCPToolProviding, Sendable {
         }
     }
 
-    public func callTool(_ name: String, arguments: JSONDictionary) async throws
-        -> Encodable & Sendable
-    {
+    public func callTool(
+        _ name: String, arguments: JSONDictionary
+    ) async throws -> Encodable & Sendable {
         guard let bare = bareName(name) else {
             throw LoupeError.failed("unknown tool '\(name)'")
         }

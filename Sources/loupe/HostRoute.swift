@@ -44,7 +44,7 @@ enum HostRoute {
     static func targetArguments(_ target: Target, _ options: Loupe.Options) -> JSONDictionary {
         var out: JSONDictionary = [
             "target": .string(target.description),
-            "viewport": .string("\(Int(options.viewport.width))x\(Int(options.viewport.height))"),
+            "viewport": .string("\(Int(options.viewport.width))x\(Int(options.viewport.height))")
         ]
         if let profile = options.profile { out["profile"] = .string(profile) }
         return out
@@ -61,16 +61,18 @@ enum HostRoute {
             case .navigate(let url): return ["open": .string(url)]
             case .launch(let app): return ["launch": .string(app)]
             case .click(let x, let y, let space, let viaCursor):
-                let prefix: String
-                switch space {
-                    case .windowPoints: prefix = ""
-                    case .screenPoints: prefix = "screen:"
-                    case .windowPixels: prefix = "px:"
-                    case .normalized: prefix = "n:"
-                }
-                return [(viaCursor ? "cursorClick" : "click"): .string("\(prefix)\(x),\(y)")]
+                return [(viaCursor ? "cursorClick" : "click"): .string("\(spacePrefix(space))\(x),\(y)")]
             default:
                 throw unsupported("this step (\(action))")
+        }
+    }
+
+    private static func spacePrefix(_ space: CoordinateSpace) -> String {
+        switch space {
+            case .windowPoints: ""
+            case .screenPoints: "screen:"
+            case .windowPixels: "px:"
+            case .normalized: "n:"
         }
     }
 

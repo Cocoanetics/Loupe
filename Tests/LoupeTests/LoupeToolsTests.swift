@@ -70,7 +70,7 @@ struct LoupeToolsTests {
         let both = try LoupeHost.configured(
             environment: [
                 "LOUPE_HOST": "https://mc.example/mcp", "LOUPE_HOST_TOKEN": "env",
-                "LOUPE_HOST_TOKEN_FILE": file.path,
+                "LOUPE_HOST_TOKEN_FILE": file.path
             ])
         #expect(both?.headers["Authorization"] == "Bearer env")
 
