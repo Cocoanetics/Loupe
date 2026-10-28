@@ -32,41 +32,69 @@ extension Loupe {
                 "recording works on sim: targets for now — mac: and web: are not implemented yet")
         }
         return try await withDriver(target, options: options) { driver in
-            guard let recorder = driver as? any RecordingDriver else {
-                throw LoupeError.unsupported("\(driver.targetDescription) cannot be recorded")
-            }
-            // Resolved before filming, so a bad region fails in a second rather
-            // than after the recording it would have thrown away.
-            var crop: (region: Frame, scale: Double)?
-            if let region {
-                crop = try await resolve(region, on: driver)
-            }
-            let handle = try await recorder.startRecording(to: url, options: record)
-            do {
-                for action in actions { try await perform(action, on: driver) }
-                switch stop {
-                    case .after(let seconds):
-                        try await hold(min(seconds, record.maxDuration))
-                    case .until(let nodes, let failIf, let timeout):
-                        try await perform(
-                            .waitFor(
-                                nodes: nodes, failIf: failIf, gone: false,
-                                timeout: min(timeout, record.maxDuration)), on: driver)
-                    case .cancelled:
-                        try await hold(record.maxDuration)
-                }
-            } catch is CancellationError {
-                // Ctrl-C: fall through to stop and keep what was filmed.
-            } catch {
-                _ = try? await handle.stop()
-                try? FileManager.default.removeItem(at: url)
-                throw error
-            }
-            var result = try await handle.stop()
-            result.region = crop?.region
-            result.scale = crop?.scale
-            return result
+            try await recordSession(
+                on: driver,
+                Session(url: url, record: record, region: region, actions: actions, stop: stop))
         }
+    }
+
+    struct Session {
+        var url: URL
+        var record: RecordOptions
+        var region: RecordRegion?
+        var actions: [UIAction]
+        var stop: RecordStop
+    }
+
+    /// The recording itself, on a driver already prepared. `record.maxDuration`
+    /// is one deadline from the moment filming starts: the actions run under it,
+    /// and the closing wait gets only what is left.
+    static func recordSession(on driver: any UIDriver, _ session: Session) async throws
+        -> RecordingResult {
+        let (url, record, region, actions, stop) =
+            (session.url, session.record, session.region, session.actions, session.stop)
+        guard let recorder = driver as? any RecordingDriver else {
+            throw LoupeError.unsupported("\(driver.targetDescription) cannot be recorded")
+        }
+        // Resolved before filming, so a bad region fails in a second rather
+        // than after the recording it would have thrown away.
+        var crop: (region: Frame, scale: Double)?
+        if let region {
+            crop = try await resolve(region, on: driver)
+        }
+        let handle = try await recorder.startRecording(to: url, options: record)
+        let startedAt = Date()
+        let remaining = { max(0, record.maxDuration - Date().timeIntervalSince(startedAt)) }
+        do {
+            if !actions.isEmpty {
+                try await Deadline.run(
+                    seconds: remaining(), "the actions, within the \(Int(record.maxDuration))s recording limit"
+                ) {
+                    for action in actions { try await perform(action, on: driver) }
+                }
+            }
+            switch stop {
+                case .after(let seconds):
+                    try await hold(min(seconds, remaining()))
+                case .until(let nodes, let failIf, let timeout):
+                    try await perform(
+                        .waitFor(
+                            nodes: nodes, failIf: failIf, gone: false,
+                            timeout: min(timeout, remaining())), on: driver)
+                case .cancelled:
+                    try await hold(remaining())
+            }
+        } catch is CancellationError {
+            // Ctrl-C: fall through to stop and keep what was filmed.
+        } catch {
+            _ = try? await handle.stop()
+            try? FileManager.default.removeItem(at: url)
+            throw error
+        }
+        var result = try await handle.stop()
+        result.region = crop?.region
+        result.scale = crop?.scale
+        return result
     }
 
     /// Turns a region into points inside the screen, using a screenshot for the
