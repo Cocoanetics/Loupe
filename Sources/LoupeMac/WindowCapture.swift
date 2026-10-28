@@ -68,13 +68,9 @@ enum WindowCapture {
         return true
     }()
 
-    /// Capture one window, optionally waiting for its pixels to stop changing.
-    ///
-    /// The shareable-content query costs ~100 ms, so the settle loop reuses a
-    /// single `SCWindow` and only re-runs the (cheap) capture.
-    static func capture(
-        _ target: CaptureTarget, settle: Bool, settleTimeout: Double
-    ) async throws -> Shot {
+    /// Find the ScreenCaptureKit window for a target, checking permission first.
+    /// Shared by screenshots and recordings so both fail the same way.
+    static func locate(_ target: CaptureTarget) async throws -> SCWindow {
         // `precondition`, not `_ =`, so the lazy initializer above is guaranteed to
         // run in release builds too rather than being optimized away.
         precondition(coreGraphicsReady)
@@ -117,6 +113,19 @@ enum WindowCapture {
             throw LoupeError.targetNotFound(
                 "no capturable window for \(target.appName) — \(listing)")
         }
+        return window
+    }
+
+    /// Capture one window, optionally waiting for its pixels to stop changing.
+    ///
+    /// The shareable-content query costs ~100 ms, so the settle loop reuses a
+    /// single `SCWindow` and only re-runs the (cheap) capture.
+    static func capture(
+        _ target: CaptureTarget, settle: Bool, settleTimeout: Double
+    ) async throws -> Shot {
+        // `precondition`, not `_ =`, so the lazy initializer above is guaranteed to
+        // run in release builds too rather than being optimized away.
+        let window = try await locate(target)
 
         var shot = try await render(window)
         guard settle else { return shot }
@@ -199,12 +208,24 @@ enum WindowCapture {
     /// normal-layer window of the process — in that order, because a frame is
     /// unique in practice while several windows can share a title.
     private static func match(_ windows: [SCWindow], target: CaptureTarget) -> SCWindow? {
+        let infos = windows.map {
+            WindowInfo(
+                id: $0.windowID, pid: $0.owningApplication?.processID ?? -1,
+                title: $0.title, frame: $0.frame, layer: $0.windowLayer)
+        }
+        guard let id = match(infos, target: target) else { return nil }
+        return windows.first { $0.windowID == id }
+    }
+
+    /// The matching rules on plain values, so they can be tested without a
+    /// window server.
+    static func match(_ windows: [WindowInfo], target: CaptureTarget) -> CGWindowID? {
         if let windowNumber = target.windowNumber,
-            let exact = windows.first(where: { $0.windowID == windowNumber }) {
-            return exact
+            let exact = windows.first(where: { $0.id == windowNumber }) {
+            return exact.id
         }
         let mine = windows.filter {
-            $0.owningApplication?.processID == target.pid && $0.frame.width > 1 && $0.frame.height > 1
+            $0.pid == target.pid && $0.frame.width > 1 && $0.frame.height > 1
         }
         if let frame = target.frame {
             let tolerance = 2.0
@@ -214,16 +235,25 @@ enum WindowCapture {
                     && abs($0.frame.width - frame.width) < tolerance
                     && abs($0.frame.height - frame.height) < tolerance
             }) {
-                return byFrame
+                return byFrame.id
             }
         }
         if let title = target.title, !title.isEmpty,
             let byTitle = mine.first(where: { $0.title == title }) {
-            return byTitle
+            return byTitle.id
         }
-        return mine.filter { $0.windowLayer == 0 }
-            .max { $0.frame.width * $0.frame.height < $1.frame.width * $1.frame.height }
+        return mine.filter { $0.layer == 0 }
+            .max { $0.frame.width * $0.frame.height < $1.frame.width * $1.frame.height }?.id
     }
+}
+
+/// The few facts of an `SCWindow` that matching looks at.
+struct WindowInfo: Sendable {
+    var id: CGWindowID
+    var pid: pid_t
+    var title: String?
+    var frame: CGRect
+    var layer: Int
 }
 
 /// Whether the login window is covering the session.

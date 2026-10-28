@@ -8,11 +8,12 @@ import LoupeMedia
 struct Record: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "record",
-        abstract: "Record a simulator to video, optionally as an animated GIF.",
+        abstract: "Record a simulator or Mac window to video, optionally as an animated GIF.",
         discussion: """
             Records while the actions run, keeps going for a short tail, then stops:
 
               loupe record sim:booted --press Login --out tap.mp4
+              loupe record mac:Notes --duration 5s --out notes.mp4
 
             With no actions, give `--duration` or `--until`, or press Ctrl-C to stop; \
             the file is finalized either way. Nothing runs longer than \(Int(RecordOptions.hardLimit)) seconds.
@@ -46,7 +47,9 @@ struct Record: AsyncParsableCommand {
             Keep only part of the screen, as x,y,w,h in points — the same space as \
             `capture --region`: origin at the top-left, x right, y down, the units \
             `describe` reports. Pixels are points × the device scale. Must lie inside \
-            the screen. Cropped when the video is encoded, since simctl films it all.
+            the screen. For a mac: window the origin is the window's top-left and the \
+            region must lie inside the window; ScreenCaptureKit films only that area. For a \
+            simulator it is cropped when the video is encoded, since simctl films it all.
             """)
     var region: String?
 

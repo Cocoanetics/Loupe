@@ -3,6 +3,7 @@ import Foundation
 import ImageIO
 import LoupeCore
 @testable import LoupeKit
+@testable import LoupeMac
 @testable import LoupeMedia
 import Testing
 
@@ -257,5 +258,143 @@ private final class FakeRecorder: RecordingDriver, @unchecked Sendable {
         #expect(Date().timeIntervalSince(started) < 3)
         #expect(result.url == url)
         #expect(recorder.stopCount == 1)
+    }
+}
+
+// MARK: - mac: recording
+
+/// A Mac-surface driver that records, as `MacDriver` now does.
+private final class FakeMac: RecordingDriver, @unchecked Sendable {
+    let targetDescription = "mac:Fake"
+    let cropsRegionAtSource = true
+    var started: URL?
+    var options: RecordOptions?
+    func capture(_ options: CaptureOptions) async throws -> Capture { throw LoupeError.unsupported("fake") }
+    func describe(_ options: DescribeOptions) async throws -> [UINode] { [] }
+    func perform(_ action: UIAction) async throws -> ActionResult { ActionResult(message: "ok") }
+    func startRecording(to url: URL, options: RecordOptions) async throws -> any RecordingHandle {
+        started = url
+        self.options = options
+        return FakeMacHandle(url: url)
+    }
+}
+
+private struct FakeMacHandle: RecordingHandle {
+    let url: URL
+    func stop() async throws -> RecordingResult { RecordingResult(url: url, duration: 0, bytes: 1) }
+}
+
+@Suite struct MacRecordingTests {
+    private func window(
+        _ id: UInt32, pid: Int32 = 7, title: String? = nil, frame: CGRect = CGRect(x: 0, y: 0, width: 400, height: 300),
+        layer: Int = 0
+    ) -> WindowInfo {
+        WindowInfo(id: id, pid: pid, title: title, frame: frame, layer: layer)
+    }
+
+    private func target(
+        number: UInt32? = nil, title: String? = nil, frame: Frame? = nil
+    ) -> CaptureTarget {
+        CaptureTarget(pid: 7, windowNumber: number, title: title, frame: frame, appName: "mac:Fake")
+    }
+
+    @Test func windowNumberWinsThenFrameThenTitleThenLargest() {
+        let small = window(1, title: "A", frame: CGRect(x: 0, y: 0, width: 100, height: 100))
+        let big = window(2, title: "B", frame: CGRect(x: 50, y: 50, width: 800, height: 600))
+        let other = window(3, pid: 99, title: "A", frame: CGRect(x: 0, y: 0, width: 100, height: 100))
+        let all = [small, big, other]
+        #expect(WindowCapture.match(all, target: target(number: 3)) == 3)
+        #expect(
+            WindowCapture.match(all, target: target(number: 42, frame: Frame(x: 1, y: 1, width: 100, height: 100)))
+                == 1)
+        #expect(WindowCapture.match(all, target: target(title: "B")) == 2)
+        #expect(WindowCapture.match(all, target: target()) == 2)
+        #expect(WindowCapture.match([other], target: target()) == nil)
+    }
+
+    @Test func sizeLocksToEvenDimensionsOfTheFirstFrame() throws {
+        let size = try #require(RecordingSize(firstFrameWidth: 801, height: 601))
+        #expect(size.width == 800 && size.height == 600)
+        #expect(RecordingSize(firstFrameWidth: 1, height: 600) == nil)
+        #expect(size.matches(frameWidth: 800, height: 600))
+        #expect(!size.matches(frameWidth: 801, height: 600))
+    }
+
+    @Test func laterFramesFitInsideTheLockedSizeWithoutStretching() throws {
+        let size = try #require(RecordingSize(firstFrameWidth: 800, height: 600))
+        #expect(size.placement(ofFrameWidth: 800, height: 600) == CGRect(x: 0, y: 0, width: 800, height: 600))
+        // Twice as wide: scaled to half height, centred vertically.
+        #expect(size.placement(ofFrameWidth: 1600, height: 600) == CGRect(x: 0, y: 150, width: 800, height: 300))
+        // Smaller window grows to fill what the aspect ratio allows.
+        #expect(size.placement(ofFrameWidth: 200, height: 300) == CGRect(x: 200, y: 0, width: 400, height: 600))
+    }
+
+    @Test func macDriverIsARecordingDriver() {
+        #expect(MacDriver(appLocator: "Fake") as Any is any RecordingDriver)
+    }
+
+    @Test func recordsThroughTheDriverSessionPath() async throws {
+        let recorder = FakeMac()
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("mac-\(UUID()).mp4")
+        let result = try await Loupe.recordSession(
+            on: recorder,
+            Loupe.Session(url: url, record: .default, region: nil, actions: [], stop: .after(0.05)))
+        #expect(recorder.started == url)
+        #expect(result.url == url)
+    }
+
+    @Test func globalFramesBecomeWindowRelative() {
+        let relative = WindowRegion.relative(
+            global: Frame(x: 150, y: 260, width: 80, height: 40),
+            toWindowAt: CGRect(x: 100, y: 200, width: 800, height: 600))
+        #expect(relative == Frame(x: 50, y: 60, width: 80, height: 40))
+    }
+
+    @Test func sourceRectFollowsTheBackingScale() throws {
+        let content = CGSize(width: 800, height: 600)
+        let retina = try WindowRegion.source(
+            Frame(x: 50, y: 60, width: 80, height: 40), contentSize: content, scale: 2)
+        #expect(retina.rect == CGRect(x: 50, y: 60, width: 80, height: 40))
+        #expect(retina.pixelWidth == 160 && retina.pixelHeight == 80)
+        let standard = try WindowRegion.source(
+            Frame(x: 50, y: 60, width: 80, height: 40), contentSize: content, scale: 1)
+        #expect(standard.pixelWidth == 80 && standard.pixelHeight == 40)
+        // Odd sizes snap outward to even pixels.
+        let odd = try WindowRegion.source(
+            Frame(x: 11, y: 11, width: 31, height: 31), contentSize: content, scale: 1)
+        #expect(odd.pixelWidth % 2 == 0 && odd.pixelHeight % 2 == 0)
+        #expect(odd.rect.contains(CGRect(x: 11, y: 11, width: 31, height: 31)))
+    }
+
+    @Test func regionsOutsideTheWindowAreRefused() {
+        let content = CGSize(width: 800, height: 600)
+        #expect(throws: LoupeError.self) {
+            _ = try WindowRegion.source(
+                Frame(x: 700, y: 500, width: 300, height: 300), contentSize: content, scale: 2)
+        }
+        #expect(throws: LoupeError.self) {
+            _ = try WindowRegion.source(
+                Frame(x: 0, y: 0, width: 0, height: 10), contentSize: content, scale: 2)
+        }
+    }
+
+    @Test func macRegionTravelsToTheDriverInsteadOfBeingCroppedAfterwards() async throws {
+        let recorder = FakeMac()
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("mac-\(UUID()).mp4")
+        let frame = Frame(x: 1, y: 2, width: 30, height: 40)
+        let result = try await Loupe.recordSession(
+            on: recorder,
+            Loupe.Session(url: url, record: .default, region: .frame(frame), actions: [], stop: .after(0.05)))
+        guard case .frame(let seen)? = recorder.options?.region else {
+            Issue.record("the driver did not receive the region")
+            return
+        }
+        #expect(seen == frame)
+        // Already cropped at the source, so nothing is left for the CLI to crop.
+        #expect(result.region == nil)
+    }
+
+    @Test func macDriverCropsAtTheSource() {
+        #expect(MacDriver(appLocator: "Fake").cropsRegionAtSource)
     }
 }
