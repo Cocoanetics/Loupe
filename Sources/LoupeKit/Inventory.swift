@@ -34,28 +34,75 @@ public struct Inventory: Codable, Sendable {
 
     public var apps: [App]
     public var simulators: [Simulator]
+    /// Why ``simulators`` is empty when listing them failed or ran out of time;
+    /// nil when it worked. The Mac apps are listed either way.
+    public var simulatorsError: String?
     /// True when the process holds the Accessibility grant; without it window
     /// titles are unavailable and `mac:` targets cannot be driven.
     public var accessibilityTrusted: Bool
 
-    @MainActor
-    public static func collect() async throws -> Inventory {
+    /// The longest `simctl` may take to list devices before the inventory goes
+    /// out without them. Normally well under a second; `simctl` stalls when
+    /// CoreSimulator is busy booting or driving a device for another process.
+    public static let simulatorTimeout: Double = 20
+
+    /// The longest one app may take to answer one Accessibility request while
+    /// its windows are read. The system default is several seconds, which an app
+    /// that is busy (being driven by another Loupe, say) or hung spends in full.
+    static let accessibilityTimeout: Float = 1
+
+    /// Everything running and every simulator, read independently and at once:
+    /// a stuck `simctl` cannot hold up the Mac apps, nor an unresponsive app the
+    /// simulators.
+    ///
+    /// - Parameter simulators: false to skip `simctl` altogether, for callers
+    ///   that only want the Mac apps.
+    public static func collect(simulators: Bool = true) async throws -> Inventory {
+        async let listed = simulators ? listSimulators() : ([], nil)
         let trusted = AXIsProcessTrusted()
+        let apps = CallTrace.during("listing Mac apps") { macApps(trusted: trusted) }
+        let (devices, error) = await listed
+        return Inventory(
+            apps: apps, simulators: devices, simulatorsError: error, accessibilityTrusted: trusted)
+    }
+
+    /// Regular apps, with their windows when Accessibility is granted.
+    ///
+    /// `runningApplications` is readable from any thread, so this stays off the
+    /// main actor: whatever else this process has queued there cannot delay it.
+    private static func macApps(trusted: Bool) -> [App] {
         let running = NSWorkspace.shared.runningApplications.filter {
             $0.activationPolicy == .regular && $0.bundleIdentifier != nil
         }
-        let apps: [App] = running.map { app in
-            App(
-                name: app.localizedName ?? app.bundleIdentifier ?? "?",
+        return running.map { app in
+            let name = app.localizedName ?? app.bundleIdentifier ?? "?"
+            let pid = app.processIdentifier
+            let windows = trusted
+                ? CallTrace.during("reading the windows of \(name) (pid \(pid)) over Accessibility") {
+                    windowList(pid: pid)
+                }
+                : []
+            return App(
+                name: name,
                 bundleID: app.bundleIdentifier,
-                pid: app.processIdentifier,
+                pid: pid,
                 active: app.isActive,
-                windows: trusted ? windowTitles(pid: app.processIdentifier) : [],
-                windowIDs: trusted ? windowIDs(pid: app.processIdentifier) : [])
+                windows: windows.map(\.title),
+                windowIDs: windows.map(\.id))
         }
         .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+    }
 
-        let devices = (try? await SimDriver.listDevices()) ?? []
+    /// The available simulators, or why there are none to show.
+    private static func listSimulators() async -> ([Simulator], String?) {
+        let devices: [SimulatorDevice]
+        do {
+            devices = try await CallTrace.bounded(seconds: simulatorTimeout, "listing simulators") {
+                try await SimDriver.listDevices()
+            }
+        } catch {
+            return ([], "\(error)")
+        }
         let simulators =
             devices
             .filter(\.isAvailable)
@@ -64,7 +111,7 @@ public struct Inventory: Codable, Sendable {
             .sorted {
                 ($0.state == "Booted" ? 0 : 1, $0.name) < ($1.state == "Booted" ? 0 : 1, $1.name)
             }
-        return Inventory(apps: apps, simulators: simulators, accessibilityTrusted: trusted)
+        return (simulators, nil)
     }
 
     /// Only the apps whose name or bundle id contains `app`, and — with a title
@@ -93,22 +140,13 @@ public struct Inventory: Codable, Sendable {
         return out
     }
 
-    /// Stable window ids, in the same order as ``windowTitles(pid:)``.
-    private static func windowIDs(pid: pid_t) -> [Int] {
+    /// Window titles and stable ids (CGWindowID, 0 when unknown) via the
+    /// accessibility API. Reading is enough — no activation, no raising, nothing
+    /// the user would notice — and each request gives up after
+    /// ``accessibilityTimeout`` rather than waiting on an app that does not answer.
+    private static func windowList(pid: pid_t) -> [(title: String, id: Int)] {
         let app = AXUIElementCreateApplication(pid)
-        var value: CFTypeRef?
-        guard
-            AXUIElementCopyAttributeValue(app, kAXWindowsAttribute as CFString, &value)
-                == .success,
-            let windows = value as? [AXUIElement]
-        else { return [] }
-        return windows.map { MacDriver.stableWindowID(of: $0) ?? 0 }
-    }
-
-    /// Window titles via the accessibility API. Reading is enough — no activation,
-    /// no raising, nothing the user would notice.
-    private static func windowTitles(pid: pid_t) -> [String] {
-        let app = AXUIElementCreateApplication(pid)
+        AXUIElementSetMessagingTimeout(app, accessibilityTimeout)
         var value: CFTypeRef?
         guard
             AXUIElementCopyAttributeValue(app, kAXWindowsAttribute as CFString, &value)
@@ -116,12 +154,13 @@ public struct Inventory: Codable, Sendable {
             let windows = value as? [AXUIElement]
         else { return [] }
         return windows.map { window in
+            // Per element: the application's timeout does not carry over.
+            AXUIElementSetMessagingTimeout(window, accessibilityTimeout)
             var title: CFTypeRef?
-            if AXUIElementCopyAttributeValue(window, kAXTitleAttribute as CFString, &title) == .success,
-                let string = title as? String {
-                return string
-            }
-            return ""
+            let text =
+                AXUIElementCopyAttributeValue(window, kAXTitleAttribute as CFString, &title) == .success
+                ? title as? String ?? "" : ""
+            return (text, MacDriver.stableWindowID(of: window) ?? 0)
         }
     }
 }

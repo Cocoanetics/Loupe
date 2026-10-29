@@ -184,7 +184,7 @@ extension AppBox {
             let reachable = (try? await driver().describe(DescribeOptions(maxDepth: 1))) != nil
             return reachable ? "runningForeground" : "notRunning"
         }
-        let inventory = try await Inventory.collect()
+        let inventory = try await Inventory.collect(simulators: false)
         let locator = target.locator
         guard
             let app = inventory.apps.first(where: {
