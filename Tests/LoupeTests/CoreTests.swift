@@ -367,3 +367,30 @@ struct CoordinateSpaceTests {
         #expect(throws: (any Error).self) { try UIAction.parse(step: "click:n:640,480") }
     }
 }
+
+@Suite("Window title patterns")
+struct TitlePatternTests {
+
+    @Test("a glob matches the whole title, case-insensitively")
+    func glob() {
+        let pattern = TitlePattern("crateflow*")
+        #expect(pattern.matches("CRATEFLOW — REJECTION – DUE ASAP"))
+        #expect(!pattern.matches("Re: CRATEFLOW"))
+        #expect(TitlePattern("*DUE ASAP").matches("CRATEFLOW — REJECTION – DUE ASAP"))
+        #expect(TitlePattern("Inbox ?").matches("Inbox 2"))
+        #expect(!TitlePattern("Inbox ?").matches("Inbox 22"))
+        #expect(TitlePattern("*").matches(""))
+    }
+
+    @Test("without wildcards it is a substring, like the #title selector")
+    func substring() {
+        #expect(TitlePattern("rejection").matches("CRATEFLOW — REJECTION – DUE ASAP"))
+        #expect(!TitlePattern("Inbox").matches("Drafts"))
+    }
+
+    @Test("straight and typographic apostrophes match each other")
+    func apostrophes() {
+        #expect(TitlePattern("Don't Save").matches("Don\u{2019}t Save"))
+        #expect(TitlePattern("Don\u{2019}t*").matches("don't save"))
+    }
+}

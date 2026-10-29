@@ -9,12 +9,27 @@ struct List: AsyncParsableCommand {
         commandName: "list",
         abstract: "List targets you can point Loupe at: running apps, their windows, and simulators.")
 
+    @Option(help: "Only apps whose name or bundle id contains this.")
+    var app: String?
+
+    @Option(
+        help: ArgumentHelp(
+            "Only windows whose title matches: a glob like 'CRATEFLOW*', or a plain substring.",
+            valueName: "pattern"))
+    var title: String?
+
     @Flag(help: "Emit JSON.")
     var json = false
 
     func run() async throws {
         if let client = try HostRoute.client() { return try await runOnHost(client) }
-        let inventory = try await Inventory.collect()
+        try render(try await Inventory.collect())
+    }
+
+    /// Print the inventory after the `--app` and `--title` filters, so a
+    /// forwarded listing reads exactly like a local one.
+    func render(_ unfiltered: Inventory) throws {
+        let inventory = unfiltered.filtered(app: app, title: title.map(TitlePattern.init))
         if json {
             print(try Out.json(inventory))
             return
@@ -23,12 +38,15 @@ struct List: AsyncParsableCommand {
         for app in inventory.apps {
             let windows = app.windows.isEmpty ? "" : "  (\(app.windows.count) window(s))"
             print("  mac:\(app.name)\(windows)   \(app.bundleID ?? "")")
-            for (index, title) in app.windows.enumerated() where !title.isEmpty {
-                let id = index < app.windowIDs.count && app.windowIDs[index] != 0
-                    ? " [id \(app.windowIDs[index])]" : ""
+            for (position, title) in app.windows.enumerated() where !title.isEmpty {
+                let index = app.windowIndices?[position] ?? position
+                let id = position < app.windowIDs.count && app.windowIDs[position] != 0
+                    ? " [id \(app.windowIDs[position])]" : ""
                 print("    mac:\(app.name)#\(index)\(id)  \(title)")
             }
         }
+        // A filter is about windows; simulators and the web hint would only be noise.
+        if app != nil || title != nil { return }
         print("\nSimulators:")
         for device in inventory.simulators {
             let mark = device.state == "Booted" ? "●" : "○"

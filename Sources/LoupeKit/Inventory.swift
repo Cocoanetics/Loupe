@@ -20,6 +20,9 @@ public struct Inventory: Codable, Sendable {
         public var windows: [String]
         /// Stable window ids (CGWindowID), index-aligned with ``windows``; 0 when unknown.
         public var windowIDs: [Int] = []
+        /// The `#N` index of each entry in ``windows`` when a filter removed some;
+        /// nil means the position is the index.
+        public var windowIndices: [Int]?
     }
 
     public struct Simulator: Codable, Sendable {
@@ -62,6 +65,32 @@ public struct Inventory: Codable, Sendable {
                 ($0.state == "Booted" ? 0 : 1, $0.name) < ($1.state == "Booted" ? 0 : 1, $1.name)
             }
         return Inventory(apps: apps, simulators: simulators, accessibilityTrusted: trusted)
+    }
+
+    /// Only the apps whose name or bundle id contains `app`, and — with a title
+    /// pattern — only their matching windows, dropping apps left with none.
+    ///
+    /// Filtering drops entries from ``App/windows``, so a position in the result
+    /// is no longer a `#N` selector; ``App/windowIndices`` keeps the original one.
+    public func filtered(app: String?, title: TitlePattern?) -> Inventory {
+        var out = self
+        if let app {
+            out.apps = apps.filter {
+                $0.name.localizedCaseInsensitiveContains(app)
+                    || ($0.bundleID ?? "").localizedCaseInsensitiveContains(app)
+            }
+        }
+        guard let title else { return out }
+        out.apps = out.apps.compactMap { app in
+            let kept = app.windows.indices.filter { title.matches(app.windows[$0]) }
+            guard !kept.isEmpty else { return nil }
+            var filtered = app
+            filtered.windows = kept.map { app.windows[$0] }
+            filtered.windowIDs = kept.map { $0 < app.windowIDs.count ? app.windowIDs[$0] : 0 }
+            filtered.windowIndices = kept.map { app.windowIndices?[$0] ?? $0 }
+            return filtered
+        }
+        return out
     }
 
     /// Stable window ids, in the same order as ``windowTitles(pid:)``.
