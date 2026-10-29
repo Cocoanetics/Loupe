@@ -116,7 +116,7 @@ public final class CallTrace: @unchecked Sendable {
 
     func timeoutError(after seconds: Double) -> TimedOut {
         TimedOut(
-            message: "\(call) did not finish within \(Int(seconds))s; it was stuck in: \(stuckIn). "
+            message: "\(call) did not finish within \(Int(seconds))s; it was stuck in: \(Secrets.redact(stuckIn)). "
                 + "The call was abandoned so the next one is not blocked behind it. Each step is "
                 + "logged to \(CallLog.shared.path ?? "(logging off)").")
     }
@@ -226,7 +226,9 @@ public final class CallLog: @unchecked Sendable {
         guard let handle else { return }
         lock.lock()
         defer { lock.unlock() }
-        let line = "\(formatter.string(from: Date())) pid=\(pid) \(text)\n"
+        // Steps quote arguments, and an argument can carry a `{{NAME}}` secret
+        // (a deep link with a token in it); none of those reach the disk.
+        let line = "\(formatter.string(from: Date())) pid=\(pid) \(Secrets.redact(text))\n"
         try? handle.write(contentsOf: Data(line.utf8))
     }
 }
