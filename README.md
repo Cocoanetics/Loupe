@@ -654,8 +654,19 @@ loupe doctor
 
 - **Web** — nothing. No grants at all.
 - **Mac** — Accessibility (read the tree, press things) and Screen Recording
-  (window screenshots). Grants bind to the code signature, so sign the binary
-  with a stable identity or you will re-grant after every rebuild.
+  (window screenshots and recordings). Grants bind to the code signature, so sign
+  the binary with a stable identity or you will re-grant after every rebuild.
+  macOS charges both to the app Loupe runs under — Terminal, your agent app, or
+  the daemon that hosts Loupe — and `doctor` names that app (`attributedTo` in
+  `--json`). Captures check Screen Recording first and fail with that remedy
+  rather than asking the system mid-task; only `doctor --request` /
+  `loupe_request_access` ever ask.
+- **ScreenCaptureKit's reminder** — even with the grant, macOS shows its own
+  "bypass the system private window picker" alert on a client's first capture
+  and every 30–90 days after. It is keyed to the client's path, so an app that
+  updates into a new versioned folder gets a new one. It does not block the
+  capture, no public API predicts it, and only the system window picker avoids
+  it. Allowing it keeps it quiet for the next period.
 - **Simulator** — Xcode's `simctl`. No TCC grants.
 
 Run it as a LaunchAgent in the user's GUI session, not a root LaunchDaemon:

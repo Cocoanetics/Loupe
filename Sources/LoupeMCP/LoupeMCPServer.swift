@@ -671,7 +671,14 @@ public actor LoupeMCPServer {
     /// missing — a `grant`. Act on `grant` and hand it to
     /// `loupe_request_access`; the remedy prose is written for someone sitting
     /// at a terminal, and following it is not something you can do.
-    /// - Returns: JSON with `surfaces`, `allGood`, and human-readable `lines`.
+    ///
+    /// `attributedTo` names the app macOS charges the Mac grants to — the
+    /// terminal or agent app this server runs under, not Loupe — which is the
+    /// row the user has to enable. A granted Screen Recording check can still
+    /// be followed by ScreenCaptureKit's own monthly reminder alert for that
+    /// app; it does not block a capture, and its `note` says so.
+    /// - Returns: JSON with `surfaces`, `allGood`, `attributedTo`, and
+    ///   human-readable `lines`.
     @MCPTool(readOnlyHint: true)
     public func loupe_doctor() async throws -> String {
         try Self.encode(await Diagnostics.run())

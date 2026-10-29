@@ -1,6 +1,7 @@
 import Foundation
 import Testing
 
+@testable import LoupeCore
 @testable import LoupeKit
 
 @Suite("Doctor reports something a caller can act on")
@@ -115,5 +116,85 @@ struct DiagnosticsTests {
         #expect(decoded.allGood)
         #expect(decoded.surfaces.first?.checks.first?.name == "WebKit")
         #expect(decoded.lines.count == 2)
+    }
+}
+
+@Suite("Grants are named after the app macOS charges them to")
+struct PrivacyAttributionTests {
+
+    /// Today's prompt: `loupe` run from Claude Code's shell was charged to
+    /// Claude Code's own bundle, not to the loupe binary.
+    @Test("a CLI under an app is attributed to the nearest app above it")
+    func cliUnderAnAppIsChargedToThatApp() {
+        let client = PrivacyAttribution.attribute(chain: [
+            "/Volumes/SSD/SwiftPM/Loupe-test/out/Products/Release/loupe",
+            "/bin/zsh",
+            "/Users/me/Library/Application Support/Claude/claude-code/2.1.309/x/claude.app/Contents/MacOS/claude",
+            "/Applications/Claude.app/Contents/MacOS/Claude"
+        ])
+        #expect(client.path.hasSuffix("/claude-code/2.1.309/x/claude.app"))
+        #expect(!client.isSelf)
+        #expect(client.settingsEntry.contains(client.path))
+    }
+
+    /// The daemon MissionControl installs runs from /opt/homebrew/bin under
+    /// launchd: no app above it, so the grant is its own.
+    @Test("a launchd daemon with no app above it is its own client")
+    func bareDaemonIsItsOwnClient() {
+        let client = PrivacyAttribution.attribute(chain: ["/opt/homebrew/bin/missioncontrold"])
+        #expect(client.isSelf)
+        #expect(client.path == "/opt/homebrew/bin/missioncontrold")
+        #expect(client.name == "missioncontrold")
+        #expect(client.settingsEntry == "/opt/homebrew/bin/missioncontrold")
+    }
+
+    @Test("a helper inside an app bundle belongs to that bundle")
+    func helperInsideBundle() {
+        let client = PrivacyAttribution.attribute(chain: [
+            "/Applications/MissionControl.app/Contents/MacOS/missioncontrold",
+            "/Applications/MissionControl.app/Contents/MacOS/MissionControl"
+        ])
+        #expect(client.path == "/Applications/MissionControl.app")
+        #expect(client.isSelf)
+    }
+
+    @Test("the Screen Recording remedy and note name the client, not loupe")
+    func remedyNamesTheClient() {
+        let client = PrivacyAttribution.Client(
+            name: "Terminal", path: "/System/Applications/Utilities/Terminal.app", isSelf: false)
+        #expect(Diagnostics.screenRecordingRemedy(client).contains("Terminal (/System/Applications"))
+        let note = Diagnostics.screenRecordingNote(client)
+        #expect(note.contains("Terminal"))
+        #expect(note.contains("does not block"))
+    }
+
+    /// A note is information that is true either way, so it shows on a passing
+    /// check too — that is what turns the monthly alert from a surprise into
+    /// something `doctor` already said.
+    @Test("a note renders on a passing check; a remedy only on a failing one")
+    func notesRenderEvenWhenOK() {
+        let lines = Diagnostics.render([
+            Diagnostics.Surface(
+                name: "Mac apps",
+                checks: [
+                    Diagnostics.Check(
+                        name: "Screen Recording", ok: true, remedy: "grant it",
+                        grant: .screenRecording, note: "charged to Terminal")
+                ])
+        ])
+        #expect(lines == ["Mac apps", "✓ Screen Recording", "    · charged to Terminal"])
+    }
+
+    /// `LoupeHost` decodes a hosted doctor's JSON; an older host sends neither
+    /// `attributedTo` nor `note`.
+    @Test("a report from an older host still decodes")
+    func olderReportDecodes() throws {
+        let json = #"""
+            {"surfaces":[{"name":"Mac","checks":[{"name":"x","ok":true,"warningOnly":false}]}],
+             "lines":[],"allGood":true}
+            """#
+        let report = try JSONDecoder().decode(Diagnostics.Report.self, from: Data(json.utf8))
+        #expect(report.attributedTo == nil)
+        #expect(report.surfaces.first?.checks.first?.note == nil)
     }
 }
