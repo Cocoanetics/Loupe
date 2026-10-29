@@ -294,6 +294,31 @@ Loupe also reads `AXRoleDescription` when a control has no title, which recovers
 names like "full screen button" and "scroll area" that would otherwise show as
 nameless — worth knowing before reaching for coordinates at all.
 
+### Cropping a capture
+
+`--region x,y,w,h` (MCP: `region`) has its origin at the top-left, x right, y
+down. By default it is in **points, in the same space `describe` reports frames
+in**, so an element's frame works as a region unchanged:
+
+| Target | Region space (points) |
+|---|---|
+| `mac:` window | global screen points — *not* window-relative; the capture notes the window's screen frame |
+| `sim:` | device screen points |
+| web | CSS pixels of the viewport, or of the page with `--full-page` |
+
+Pixels are points × the backing scale. To crop by what you see in a screenshot,
+use pixel units instead, measured from the top-left of the uncropped image:
+
+```bash
+# a band 380 px down a 2800 px wide full capture
+loupe capture mac:Mail --region 0,380,2800,320 --region-units pixels
+```
+
+Over MCP, `regionUnits: "pixels"` is measured on the image `loupe_capture`
+returns, which is downscaled to at most 1400 px on its longest edge — so a band
+read off a returned 1400 px wide capture is `region: "0,380,1400,320"`. The CLI
+notes the crop it applied in both points and pixels.
+
 ### Clicking by coordinate
 
 Sometimes you have a point rather than an element. `click:` still goes through

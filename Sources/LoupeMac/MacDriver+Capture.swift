@@ -34,7 +34,10 @@ extension MacDriver {
         var pointSize = shot.pointSize
         var applied: CaptureCrop?
         if let region = options.regionInPoints(scale: shot.scale, origin: shot.windowFrame.origin) {
-            (png, pointSize, applied) = try crop(shot, to: region, notes: &notes)
+            let kept: CaptureCrop
+            (png, kept) = try crop(shot, to: region, notes: &notes)
+            pointSize = CGSize(width: kept.points.width, height: kept.points.height)
+            applied = kept
         }
 
         return Capture(
@@ -100,7 +103,7 @@ extension MacDriver {
 
     /// Crop to a region given in global screen points.
     private func crop(_ shot: Shot, to region: Frame, notes: inout [String]) throws -> (
-        Data, CGSize, CaptureCrop
+        Data, CaptureCrop
     ) {
         guard !region.isEmpty else {
             throw LoupeError.failed("capture region has zero width or height")
@@ -139,12 +142,7 @@ extension MacDriver {
             pixels: Frame(
                 x: clipped.minX, y: clipped.minY, width: clipped.width, height: clipped.height))
         notes.append(applied.note)
-        return (
-            try ImageOps.encode(cropped),
-            CGSize(
-                width: Double(cropped.width) / shot.scale, height: Double(cropped.height) / shot.scale),
-            applied
-        )
+        return (try ImageOps.encode(cropped), applied)
     }
 
     /// Wait for the window to stop changing, so a before/after pair is not just
