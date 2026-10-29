@@ -620,6 +620,26 @@ is the same code path `loupe script` runs — the CLI is a second front end on i
 not a second implementation — so a flow proved at the terminal behaves
 identically when an agent runs it.
 
+No call waits on a wedged step until the client gives up. Each tool call has a budget: 60 s
+for `loupe_list_targets`, `loupe_doctor` and the other listing tools, and 240 s for the rest,
+which may first have to boot a simulator and start its bridge. `loupe_record` and `loupe_script`
+are the exceptions: they stop at their own `duration` and `timeout`, and are cut off only
+past that (360 s for a recording, the script's `timeout` plus 60 s). A call that runs out
+of time comes back as a tool error naming the step it was stuck in, for example
+`` `xcrun simctl list devices --json` (for 58.2s) ``. `loupe_list_targets` lists Mac apps and
+simulators independently, so when `simctl` stalls the apps still come back, and
+`simulatorsError` says why the simulators are missing. Each app gets 1 s per Accessibility
+request. An app that does not answer in that time is still listed, with `windowsError`
+explaining why its windows are missing.
+
+| Variable | Meaning |
+|---|---|
+| `LOUPE_CALL_TIMEOUT` | Seconds, replaces every tool's budget except `loupe_record` and `loupe_script`. |
+| `LOUPE_CALL_LOG` | Where each call's steps are logged, default `~/Library/Logs/Loupe/calls.log`; `off` turns logging off. |
+
+The log is shared by every Loupe process on the Mac, one line per step, each prefixed with
+its pid. A call the client abandoned still leaves the last step it reached in the log.
+
 Wire it into any ACP agent, for example in `~/.acpx/config.json`:
 
 ```json

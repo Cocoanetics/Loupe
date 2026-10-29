@@ -71,6 +71,10 @@ public actor LoupeMCPServer {
     /// titles, and the simulators on this machine. Call this first if you are not
     /// certain how an app or device is named — guessing target names is the most
     /// common cause of a failed call.
+    /// Mac apps and simulators are listed independently: if `simctl` does not
+    /// answer, the apps still come back, with `simulatorsError` saying why the
+    /// simulators are missing. An app that did not answer Accessibility in time
+    /// carries `windowsError`: its empty `windows` means unknown, not none.
     /// - Returns: JSON with `apps`, `simulators`, and whether Accessibility is granted.
     @MCPTool(readOnlyHint: true)
     public func loupe_list_targets() async throws -> String {

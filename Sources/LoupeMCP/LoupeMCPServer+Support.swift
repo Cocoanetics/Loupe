@@ -134,7 +134,7 @@ extension LoupeMCPServer {
 
     /// Serve over stdio, which is how ACP/acpx agents and Claude Code launch it.
     public static func serveOverStdio() async throws {
-        let server = LoupeMCPServer()
+        let server = LoupeBoundedServer(LoupeMCPServer())
         // stdio carries the protocol itself, so logging must go to stderr or it
         // corrupts the stream.
         var logger = Logger(label: "dev.cocoanetics.loupe.mcp")

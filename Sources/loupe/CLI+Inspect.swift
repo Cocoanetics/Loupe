@@ -38,6 +38,7 @@ struct List: AsyncParsableCommand {
         for app in inventory.apps {
             let windows = app.windows.isEmpty ? "" : "  (\(app.windows.count) window(s))"
             print("  mac:\(app.name)\(windows)   \(app.bundleID ?? "")")
+            if let error = app.windowsError { print("    (\(error))") }
             for (position, title) in app.windows.enumerated() where !title.isEmpty {
                 let index = app.windowIndices?[position] ?? position
                 let id = position < app.windowIDs.count && app.windowIDs[position] != 0
@@ -52,7 +53,11 @@ struct List: AsyncParsableCommand {
             let mark = device.state == "Booted" ? "●" : "○"
             print("  \(mark) sim:\(device.name)   \(device.runtime)   \(device.udid)")
         }
-        if inventory.simulators.isEmpty { print("  (none available)") }
+        if let error = inventory.simulatorsError {
+            print("  (could not list them: \(error))")
+        } else if inventory.simulators.isEmpty {
+            print("  (none available)")
+        }
         print("\nWeb: any URL, e.g. `loupe capture https://example.com`")
     }
 }

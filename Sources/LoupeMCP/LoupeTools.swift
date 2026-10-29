@@ -87,7 +87,7 @@ public final class LoupeTools: MCPToolProviding, Sendable {
         guard let bare = bareName(name) else {
             throw LoupeError.failed("unknown tool '\(name)'")
         }
-        return try await engine.callTool(bare, arguments: arguments)
+        return try await engine.boundedCall(bare, arguments: arguments)
     }
 
     /// Call a tool scoped to a run: relative paths resolve against the context's

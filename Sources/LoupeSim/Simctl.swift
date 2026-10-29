@@ -106,10 +106,13 @@ enum Simctl {
     static func run(
         _ args: [String], timeout: Double = 120, environment: [String: String] = [:]
     ) async throws -> Output {
-        try await withCheckedThrowingContinuation { continuation in
-            queue.async {
-                continuation.resume(
-                    with: Result { try runBlocking(args, timeout: timeout, environment: environment) })
+        // Marked here, before the hop: the queue does not carry the call's trace.
+        try await CallTrace.during("`xcrun simctl \(args.joined(separator: " "))`") {
+            try await withCheckedThrowingContinuation { continuation in
+                queue.async {
+                    continuation.resume(
+                        with: Result { try runBlocking(args, timeout: timeout, environment: environment) })
+                }
             }
         }
     }
@@ -174,12 +177,22 @@ enum Simctl {
 
         if finished.wait(timeout: .now() + timeout) == .timedOut {
             process.terminate()
-            _ = finished.wait(timeout: .now() + 5)
-            readers.wait()
+            if finished.wait(timeout: .now() + 5) == .timedOut {
+                // SIGTERM is a request; a simctl wedged inside CoreSimulator can
+                // sit on it, and waiting for that is the hang this path exists to end.
+                kill(process.processIdentifier, SIGKILL)
+                _ = finished.wait(timeout: .now() + 2)
+            }
+            _ = readers.wait(timeout: .now() + 2)
             throw LoupeError.timeout(
                 "`xcrun simctl \(args.joined(separator: " "))` did not finish within \(Int(timeout))s")
         }
-        readers.wait()
+        // Exited, but a child it left behind can hold the pipes open, and then
+        // the readers never see end-of-file. Give up on them rather than on the call.
+        if readers.wait(timeout: .now() + 10) == .timedOut {
+            throw LoupeError.timeout(
+                "`xcrun simctl \(args.joined(separator: " "))` exited, but its output never closed")
+        }
 
         return Output(
             status: process.terminationStatus,
