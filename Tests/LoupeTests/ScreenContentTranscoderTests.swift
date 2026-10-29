@@ -5,7 +5,8 @@ import LoupeCore
 @testable import LoupeMedia
 import Testing
 
-@Suite struct ScreenContentTranscoderTests {
+// The 5K encodes take about a second; a stuck one fails here instead of holding up CI.
+@Suite(.timeLimit(.minutes(1))) struct ScreenContentTranscoderTests {
     @Test func picturesPastTheH264LimitAreScaledToFit() {
         #expect(ScreenContentTranscoder.encodedSize(width: 5120, height: 2880) == (4096, 2304))
         #expect(ScreenContentTranscoder.encodedSize(width: 2880, height: 5120) == (2304, 4096))

@@ -1,3 +1,4 @@
+import Accelerate
 import AVFoundation
 import CoreGraphics
 import CoreMedia
@@ -57,11 +58,19 @@ public enum ScreenContentTranscoder {
         var adaptor: AVAssetWriterInputPixelBufferAdaptor
         var rect: CGRect
         var duration: CMTime
-        /// The encoded size, and the session that scales to it when it is not `rect`'s.
+        /// The encoded size; frames are scaled to it when it is not `rect`'s.
         var width: Int
         var height: Int
-        var scaler: VTPixelTransferSession?
         var notes: [String]
+
+        var isScaled: Bool { (width, height) != (Int(rect.width), Int(rect.height)) }
+    }
+
+    /// What the frame loop leaves behind.
+    private struct Tally {
+        var sourceFrames = 0
+        var written = 0
+        var lastKept: (pixels: CVPixelBuffer, time: CMTime)?
     }
 
     public static func transcode(
@@ -69,44 +78,59 @@ public enum ScreenContentTranscoder {
         threshold: Double = defaultThreshold
     ) async throws -> TranscodeResult {
         let pipeline = try await makePipeline(from: source, to: destination, crop: crop)
+        // Decoding, cropping and scaling block; on a thread of their own, a slow
+        // or stuck frame holds up this transcode, not Swift's cooperative pool.
+        let carried = Unchecked(pipeline)
+        let carriedTally: Unchecked<Tally> = try await withCheckedThrowingContinuation { continuation in
+            DispatchQueue(label: "com.cocoanetics.loupe.transcode").async {
+                continuation.resume(with: Result {
+                    Unchecked(try encodeFrames(carried.value, cropping: crop != nil, threshold: threshold))
+                })
+            }
+        }
+        let tally = carriedTally.value
+        if pipeline.reader.status == .failed {
+            pipeline.writer.cancelWriting()
+            throw MediaError.unreadable(pipeline.reader.error?.localizedDescription ?? "reading failed")
+        }
+        try await finish(pipeline, repeating: tally.lastKept)
+        guard pipeline.writer.status == .completed, tally.written > 0 else {
+            throw MediaError.encodeFailed(
+                pipeline.writer.error?.localizedDescription ?? "the encoder wrote no frames")
+        }
+        return TranscodeResult(
+            sourceFrames: tally.sourceFrames, writtenFrames: tally.written, width: pipeline.width,
+            height: pipeline.height, notes: pipeline.notes)
+    }
+
+    /// Reads, crops, scales and appends every changed frame. Blocks; call it off the cooperative pool.
+    private static func encodeFrames(_ pipeline: Pipeline, cropping: Bool, threshold: Double) throws -> Tally {
         var detector = FrameChangeDetector(threshold: threshold)
-        var sourceFrames = 0
-        var written = 0
-        var lastKept: (pixels: CVPixelBuffer, time: CMTime)?
+        var tally = Tally()
         while let sample = pipeline.output.copyNextSampleBuffer() {
             guard let full = CMSampleBufferGetImageBuffer(sample) else { continue }
-            sourceFrames += 1
+            tally.sourceFrames += 1
             let pool = pipeline.adaptor.pixelBufferPool
             // The adaptor's pool holds encoded-size buffers, so a crop that is
             // scaled afterwards needs its own.
-            var pixels = crop == nil
-                ? full : try cropped(full, to: pipeline.rect, pool: pipeline.scaler == nil ? pool : nil)
-            if let scaler = pipeline.scaler {
-                pixels = try scaled(
-                    pixels, with: scaler, width: pipeline.width, height: pipeline.height, pool: pool)
+            var pixels = cropping
+                ? try cropped(full, to: pipeline.rect, pool: pipeline.isScaled ? nil : pool) : full
+            if pipeline.isScaled {
+                pixels = try scaled(pixels, width: pipeline.width, height: pipeline.height, pool: pool)
             }
             var image: CGImage?
             VTCreateCGImageFromCVPixelBuffer(pixels, options: nil, imageOut: &image)
             // A frame that cannot be inspected is kept, not guessed at.
             if let image, !detector.isChange(image) { continue }
-            try await waitUntilReady(pipeline)
+            while !pipeline.input.isReadyForMoreMediaData, pipeline.writer.status != .failed {
+                Thread.sleep(forTimeInterval: 0.005)
+            }
             let time = max(CMSampleBufferGetPresentationTimeStamp(sample), .zero)
             guard pipeline.adaptor.append(pixels, withPresentationTime: time) else { break }
-            written += 1
-            lastKept = (pixels, time)
+            tally.written += 1
+            tally.lastKept = (pixels, time)
         }
-        if pipeline.reader.status == .failed {
-            pipeline.writer.cancelWriting()
-            throw MediaError.unreadable(pipeline.reader.error?.localizedDescription ?? "reading failed")
-        }
-        try await finish(pipeline, repeating: lastKept)
-        guard pipeline.writer.status == .completed, written > 0 else {
-            throw MediaError.encodeFailed(
-                pipeline.writer.error?.localizedDescription ?? "the encoder wrote no frames")
-        }
-        return TranscodeResult(
-            sourceFrames: sourceFrames, writtenFrames: written, width: pipeline.width, height: pipeline.height,
-            notes: pipeline.notes)
+        return tally
     }
 
     private static func waitUntilReady(_ pipeline: Pipeline) async throws {
@@ -161,8 +185,8 @@ public enum ScreenContentTranscoder {
         reader.add(output)
 
         let (width, height) = encodedSize(width: Int(rect.width), height: Int(rect.height))
-        var notes: [String] = []
-        let scaler = try makeScaler(from: rect, toWidth: width, height: height, notes: &notes)
+        var notes = (width, height) == (Int(rect.width), Int(rect.height))
+            ? [] : ["h264: scaled \(Int(rect.width))×\(Int(rect.height)) → \(width)×\(height) (H.264 limit)"]
 
         try? FileManager.default.removeItem(at: destination)
         let writer = try AVAssetWriter(outputURL: destination, fileType: .mp4)
@@ -191,21 +215,7 @@ public enum ScreenContentTranscoder {
         writer.startSession(atSourceTime: .zero)
         return Pipeline(
             reader: reader, output: output, writer: writer, input: input, adaptor: adaptor,
-            rect: rect, duration: duration, width: width, height: height, scaler: scaler, notes: notes)
-    }
-
-    /// A session to scale `rect`-sized frames to the encoded size, or nil when they are that size.
-    private static func makeScaler(from rect: CGRect, toWidth width: Int, height: Int, notes: inout [String])
-        throws -> VTPixelTransferSession? {
-        let rectWidth = Int(rect.width)
-        let rectHeight = Int(rect.height)
-        guard (width, height) != (rectWidth, rectHeight) else { return nil }
-        var scaler: VTPixelTransferSession?
-        guard VTPixelTransferSessionCreate(allocator: nil, pixelTransferSessionOut: &scaler) == noErr,
-            let scaler
-        else { throw MediaError.encodeFailed("cannot scale \(rectWidth)×\(rectHeight) for H.264") }
-        notes.append("h264: scaled \(rectWidth)×\(rectHeight) → \(width)×\(height) (H.264 limit)")
-        return scaler
+            rect: rect, duration: duration, width: width, height: height, notes: notes)
     }
 
     /// `transform` for frames scaled from `size` to `width`×`height`. The rotation
@@ -284,11 +294,13 @@ public enum ScreenContentTranscoder {
 }
 
 extension ScreenContentTranscoder {
-    /// Scales `source` to `width`×`height`, into a buffer from the writer's pool.
-    static func scaled(
-        _ source: CVPixelBuffer, with session: VTPixelTransferSession, width: Int, height: Int,
-        pool: CVPixelBufferPool?
-    ) throws -> CVPixelBuffer {
+    /// Scales a 32-bit BGRA `source` to `width`×`height`, into a buffer from the writer's pool.
+    ///
+    /// On the CPU with vImage rather than `VTPixelTransferSession`: that one wants
+    /// a hardware scaler, and where there is none (a virtual Mac) it can block
+    /// instead of failing.
+    static func scaled(_ source: CVPixelBuffer, width: Int, height: Int, pool: CVPixelBufferPool?) throws
+        -> CVPixelBuffer {
         var made: CVPixelBuffer?
         if let pool {
             CVPixelBufferPoolCreatePixelBuffer(nil, pool, &made)
@@ -296,9 +308,24 @@ extension ScreenContentTranscoder {
             CVPixelBufferCreate(nil, width, height, kCVPixelFormatType_32BGRA, nil, &made)
         }
         guard let target = made else { throw MediaError.encodeFailed("could not allocate a frame") }
-        guard VTPixelTransferSessionTransferImage(session, from: source, to: target) == noErr else {
-            throw MediaError.encodeFailed("could not scale a frame")
+        CVPixelBufferLockBaseAddress(source, .readOnly)
+        CVPixelBufferLockBaseAddress(target, [])
+        defer {
+            CVPixelBufferUnlockBaseAddress(target, [])
+            CVPixelBufferUnlockBaseAddress(source, .readOnly)
         }
+        guard let from = CVPixelBufferGetBaseAddress(source),
+            let destination = CVPixelBufferGetBaseAddress(target)
+        else { throw MediaError.encodeFailed("could not map a frame") }
+        var input = vImage_Buffer(
+            data: from, height: vImagePixelCount(CVPixelBufferGetHeight(source)),
+            width: vImagePixelCount(CVPixelBufferGetWidth(source)), rowBytes: CVPixelBufferGetBytesPerRow(source))
+        var output = vImage_Buffer(
+            data: destination, height: vImagePixelCount(CVPixelBufferGetHeight(target)),
+            width: vImagePixelCount(CVPixelBufferGetWidth(target)), rowBytes: CVPixelBufferGetBytesPerRow(target))
+        // Four 8-bit channels; their order does not matter to the scaler.
+        guard vImageScale_ARGB8888(&input, &output, nil, vImage_Flags(kvImageHighQualityResampling)) == kvImageNoError
+        else { throw MediaError.encodeFailed("could not scale a frame") }
         return target
     }
 
