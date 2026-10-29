@@ -8,8 +8,7 @@ import SwiftMCP
 extension LoupeMCPServer {
 
     /// How long one call of `tool` may take before it is abandoned with an error
-    /// naming the step it was stuck in; nil for the tools that already bound
-    /// themselves by a caller-given length.
+    /// naming the step it was stuck in.
     ///
     /// Without this a call that wedges — a `simctl` blocked behind another
     /// process booting a simulator, an app that stopped answering Accessibility —
@@ -18,11 +17,22 @@ extension LoupeMCPServer {
     /// rest may have to boot a simulator and start its bridge (up to two minutes
     /// on a cold Mac) before doing what was asked. `LOUPE_CALL_TIMEOUT` (seconds)
     /// replaces both numbers.
+    ///
+    /// `loupe_script` and `loupe_record` stop themselves, but not reliably: a
+    /// script stuck in a loop that never suspends cannot be cancelled, and its own
+    /// timeout waits for it to unwind. So they get an outer limit too, past their
+    /// own — the script's `timeout` plus a minute; for a recording, which runs at
+    /// most 120 s, enough to start, record and encode — that the override does not
+    /// shorten, since cutting them off before their own limit would be wrong.
     public static func budget(
-        for tool: String, environment: [String: String] = ProcessInfo.processInfo.environment
-    ) -> Double? {
-        // `loupe_record` stops at its own `duration`/`timeout`; `loupe_script` at its `timeout`.
-        if ["loupe_record", "loupe_script"].contains(tool) { return nil }
+        for tool: String, arguments: JSONDictionary = [:],
+        environment: [String: String] = ProcessInfo.processInfo.environment
+    ) -> Double {
+        switch tool {
+            case "loupe_script": return (seconds(arguments["timeout"]) ?? 120) + 60
+            case "loupe_record": return 360
+            default: break
+        }
         if let raw = environment["LOUPE_CALL_TIMEOUT"], let seconds = Double(raw), seconds > 0 {
             return seconds
         }
@@ -33,11 +43,25 @@ extension LoupeMCPServer {
         return quick.contains(tool) ? 60 : 240
     }
 
-    /// `callTool`, traced and held to ``budget(for:environment:)``.
+    /// A positive number of seconds from a call's arguments, however it was spelled.
+    private static func seconds(_ value: JSONValue?) -> Double? {
+        let number: Double?
+        switch value {
+            case .integer(let int): number = Double(int)
+            case .unsignedInteger(let uint): number = Double(uint)
+            case .double(let double): number = double
+            case .string(let text): number = Double(text)
+            default: number = nil
+        }
+        guard let number, number > 0, number.isFinite else { return nil }
+        return number
+    }
+
+    /// `callTool`, traced and held to ``budget(for:arguments:environment:)``.
     public func boundedCall(
         _ tool: String, arguments: JSONDictionary
     ) async throws -> Encodable & Sendable {
-        let result = try await CallTrace.run(tool, seconds: Self.budget(for: tool)) {
+        let result = try await CallTrace.run(tool, seconds: Self.budget(for: tool, arguments: arguments)) {
             Unchecked(try await self.callTool(tool, arguments: arguments))
         }
         return result.value
@@ -64,8 +88,9 @@ final class LoupeBoundedServer: MCPServer, Sendable {
         guard case .request(let request) = message, request.method == "tools/call",
             let tool = request.params?.dictionaryValue?["name"]?.stringValue
         else { return await inner.handleMessage(message) }
+        let arguments = request.params?.dictionaryValue?["arguments"]?.dictionaryValue ?? [:]
         do {
-            return try await CallTrace.run(tool, seconds: LoupeMCPServer.budget(for: tool)) {
+            return try await CallTrace.run(tool, seconds: LoupeMCPServer.budget(for: tool, arguments: arguments)) {
                 Unchecked(await self.inner.handleMessage(message))
             }.value
         } catch {
