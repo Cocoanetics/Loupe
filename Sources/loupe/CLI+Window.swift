@@ -35,7 +35,7 @@ struct Window: AsyncParsableCommand {
         }
         let driver = MacDriver(
             appLocator: parsed.locator, windowIndex: parsed.windowIndex,
-            windowTitle: parsed.windowTitle)
+            windowTitle: parsed.windowTitle, windowID: parsed.windowID)
         print(try await driver.window(verb).message)
     }
 }
