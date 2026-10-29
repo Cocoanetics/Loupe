@@ -19,25 +19,41 @@ public enum Deadline {
         _ what: @autoclosure @Sendable () -> String,
         _ body: @escaping @Sendable () async throws -> T
     ) async throws -> T {
+        let description = what()
+        return try await run(
+            seconds: seconds,
+            timeoutError: {
+                LoupeError.failed(
+                    "\(description) did not answer within \(Int(seconds))s. It was abandoned "
+                        + "rather than waited on, so nothing is stuck — but nothing was read "
+                        + "either. Retry, and if it repeats the app is not answering.")
+            },
+            body)
+    }
+
+    /// The same, with the error built when the deadline fires rather than up
+    /// front — so it can say what the body was doing at that moment.
+    public static func run<T: Sendable>(
+        seconds: Double,
+        timeoutError: @escaping @Sendable () -> any Error,
+        _ body: @escaping @Sendable () async throws -> T
+    ) async throws -> T {
         // `isFinite` as well as `> 0`: an infinite or absurd deadline would
         // otherwise overflow the nanosecond conversion and trap.
         guard seconds > 0, seconds.isFinite else { return try await body() }
         let gate = Gate<T>()
-        let work = Task.detached {
+        // Unstructured rather than detached so the body keeps the caller's
+        // task-locals (the call's context and trace); it still does not inherit
+        // the caller's cancellation, which is handled explicitly below.
+        let work = Task {
             do { gate.finish(.success(try await body())) } catch { gate.finish(.failure(error)) }
         }
-        let description = what()
         let timer = Task.detached {
             let nanoseconds = (seconds * 1_000_000_000).rounded()
             try? await Task.sleep(
                 nanoseconds: nanoseconds < Double(UInt64.max) ? UInt64(nanoseconds) : .max)
             guard !Task.isCancelled else { return }
-            gate.finish(
-                .failure(
-                    LoupeError.failed(
-                        "\(description) did not answer within \(Int(seconds))s. It was abandoned "
-                            + "rather than waited on, so nothing is stuck — but nothing was read "
-                            + "either. Retry, and if it repeats the app is not answering.")))
+            gate.finish(.failure(timeoutError()))
             // Abandoned, not forgotten: a body that honours cancellation stops
             // here instead of carrying on driving the target.
             work.cancel()
