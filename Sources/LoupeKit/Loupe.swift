@@ -65,7 +65,7 @@ public enum Loupe {
             case .mac:
                 return MacDriver(
                     appLocator: target.locator, windowIndex: target.windowIndex,
-                    windowTitle: target.windowTitle)
+                    windowTitle: target.windowTitle, windowID: target.windowID)
             case .sim:
                 return SimDriver(deviceLocator: target.locator)
             case .live:

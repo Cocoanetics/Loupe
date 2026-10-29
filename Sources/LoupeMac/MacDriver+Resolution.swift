@@ -130,7 +130,8 @@ extension MacDriver {
             application.localizedName ?? application.bundleIdentifier
             ?? "pid \(application.processIdentifier)"
         let title = windowElement.flatMap { AXAPI.string($0, kAXTitleAttribute) }
-        return "mac:\(name)#\(resolvedWindowIndex)"
+        let identifier = windowElement.flatMap { AXAPI.windowNumber($0) }.map { " [id \($0)]" } ?? ""
+        return "mac:\(name)#\(resolvedWindowIndex)\(identifier)"
             + (title.map { " '\($0)'" } ?? "")
             + " (pid \(application.processIdentifier))"
     }

@@ -53,6 +53,8 @@ public final class MacDriver: UIDriver {
 
     var windowElement: AXUIElement?
     let windowTitle: String?
+    /// Stable CGWindowID to resolve to, surviving index shifts.
+    nonisolated public let windowID: Int?
     var resolvedWindowIndex = 0
     /// Node id → element, rebuilt by every ``describe(_:)``. Ids are also
     /// re-walkable paths, so a handle that predates the current cache still
@@ -66,14 +68,17 @@ public final class MacDriver: UIDriver {
     /// just to construct one; every method that touches AppKit or the
     /// accessibility tree hops to the main actor on its own.
     nonisolated public init(
-        appLocator: String, windowIndex: Int? = nil, windowTitle: String? = nil
+        appLocator: String, windowIndex: Int? = nil, windowTitle: String? = nil,
+        windowID: Int? = nil
     ) {
         self.appLocator = appLocator
         self.windowIndex = windowIndex
         self.windowTitle = windowTitle
+        self.windowID = windowID
     }
 
     nonisolated public var targetDescription: String {
+        if let windowID { return "mac:\(appLocator)@\(windowID)" }
         if let windowIndex { return "mac:\(appLocator)#\(windowIndex)" }
         if let windowTitle { return "mac:\(appLocator)#\(windowTitle)" }
         return "mac:\(appLocator)"

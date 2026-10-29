@@ -61,8 +61,14 @@ extension MacDriver {
                 guard status == .success else {
                     throw LoupeError.failed("could not close the window (AX error \(status.rawValue))")
                 }
-                return ActionResult(message: "closed \(targetDescription)")
+                let identifier = AXAPI.windowNumber(windowElement).map { " [id \($0)]" } ?? ""
+                return ActionResult(message: "closed \(targetDescription)\(identifier)")
         }
+    }
+
+    /// The stable window id (CGWindowID) behind an accessibility window, or nil.
+    public nonisolated static func stableWindowID(of window: AXUIElement) -> Int? {
+        AXAPI.windowNumber(window).map { Int($0) }
     }
 
     /// A window's own control button, found by accessibility subrole rather than
@@ -82,6 +88,25 @@ extension MacDriver {
         let name = application.localizedName ?? appLocator
         guard !windows.isEmpty else {
             throw Self.noWindowsError(for: application, named: name)
+        }
+        // A stable id beats everything: it does not move when the order changes.
+        if let windowID {
+            guard
+                let hit = windows.enumerated().first(where: {
+                    AXAPI.windowNumber($0.element).map { Int($0) } == windowID
+                })
+            else {
+                let ids = windows.enumerated().map {
+                    "#\($0.offset) [id \(AXAPI.windowNumber($0.element).map { String($0) } ?? "?")]"
+                }
+                .joined(separator: ", ")
+                throw LoupeError.targetNotFound(
+                    "\(name) has no window with id \(windowID) — it may have closed, or be on "
+                        + "another Space. It has: \(ids)")
+            }
+            resolvedWindowIndex = hit.offset
+            windowElement = hit.element
+            return
         }
         // Title match first: it survives a transient panel stealing index 0.
         if let windowTitle {

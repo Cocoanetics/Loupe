@@ -24,7 +24,9 @@ struct List: AsyncParsableCommand {
             let windows = app.windows.isEmpty ? "" : "  (\(app.windows.count) window(s))"
             print("  mac:\(app.name)\(windows)   \(app.bundleID ?? "")")
             for (index, title) in app.windows.enumerated() where !title.isEmpty {
-                print("    mac:\(app.name)#\(index)  \(title)")
+                let id = index < app.windowIDs.count && app.windowIDs[index] != 0
+                    ? " [id \(app.windowIDs[index])]" : ""
+                print("    mac:\(app.name)#\(index)\(id)  \(title)")
             }
         }
         print("\nSimulators:")
