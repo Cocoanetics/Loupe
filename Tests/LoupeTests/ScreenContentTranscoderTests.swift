@@ -1,6 +1,7 @@
 import AVFoundation
 import CoreGraphics
 import Foundation
+import ImageIO
 import LoupeCore
 @testable import LoupeMedia
 import Testing
@@ -92,6 +93,48 @@ import Testing
         #expect(Int(size.width) == 4096 && Int(size.height) == 2304)
     }
 
+    @Test func aFiveKSourceFitsAMaxSizePreset() async throws {
+        let source = try await Self.sharedFiveK.value
+        let out = FileManager.default.temporaryDirectory.appendingPathComponent("1080p-\(UUID()).mp4")
+        defer { try? FileManager.default.removeItem(at: out) }
+
+        let done = try await ScreenContentTranscoder.transcode(
+            from: source, to: out, maxSize: try MaxSize.parse("1080p"))
+        #expect(done.width == 1920 && done.height == 1080)
+        #expect(done.notes.contains("h264: scaled 5120×2880 → 1920×1080 (--max-size 1080p)"))
+        #expect(!done.notes.contains { $0.contains("H.264 limit") })
+        let track = try #require(try await AVURLAsset(url: out).loadTracks(withMediaType: .video).first)
+        let size = try await track.load(.naturalSize)
+        #expect(Int(size.width) == 1920 && Int(size.height) == 1080)
+    }
+
+    @Test func aPresetTurnsWithATrackRotatedToPortrait() {
+        let quarter = CGAffineTransform(a: 0, b: 1, c: -1, d: 0, tx: 2880, ty: 0)
+        let preset = MaxSize(width: 1920, height: 1080, followsOrientation: true)
+        // Shown as 2880×5120, so it fits 1080×1920; in the track's own pixels that is 1920×1080.
+        #expect(
+            ScreenContentTranscoder.boxed(CGSize(width: 5120, height: 2880), into: preset, transform: quarter)
+                == (1920, 1080))
+        let literal = MaxSize(width: 1920, height: 1080)
+        #expect(
+            ScreenContentTranscoder.boxed(CGSize(width: 5120, height: 2880), into: literal, transform: quarter)
+                == (1080, 606))
+    }
+
+    @Test func aPortraitGIFFitsTheDefaultBox() async throws {
+        let source = try await Self.movie(width: 1668, height: 2420)
+        defer { try? FileManager.default.removeItem(at: source) }
+
+        let result = try await VideoConverter.gif(from: source)
+        let image = try #require(
+            CGImageSourceCreateWithData(result.data as CFData, nil).flatMap {
+                CGImageSourceCreateImageAtIndex($0, 0, nil)
+            })
+        #expect(max(image.width, image.height) <= 800)
+        #expect(image.height > image.width)
+        #expect(result.notes.contains { $0.contains("1668×2420 →") && $0.contains("(--max-size 800x800)") })
+    }
+
     @Test func aCropIsScaledOnlyWhenItIsStillTooLarge() async throws {
         let source = try await Self.sharedFiveK.value
         let out = FileManager.default.temporaryDirectory.appendingPathComponent("crop-\(UUID()).mp4")
@@ -124,12 +167,16 @@ import Testing
         #expect(!FileManager.default.fileExists(atPath: raw.path))
     }
 
-    /// Two different solid frames at 5120×2880, written the way the Mac recorder
-    /// writes its raw file: plain H.264 with no compression properties.
     private static func fiveKMovie(transform: CGAffineTransform = .identity) async throws -> URL {
-        let url = FileManager.default.temporaryDirectory.appendingPathComponent("raw-5k-\(UUID()).mov")
-        let width = 5120
-        let height = 2880
+        try await movie(width: 5120, height: 2880, transform: transform)
+    }
+
+    /// Two different solid frames, written the way the Mac recorder writes its
+    /// raw file: plain H.264 with no compression properties.
+
+    private static func movie(width: Int, height: Int, transform: CGAffineTransform = .identity)
+        async throws -> URL {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("raw-\(width)-\(UUID()).mov")
         let writer = try AVAssetWriter(outputURL: url, fileType: .mov)
         let input = AVAssetWriterInput(
             mediaType: .video,
