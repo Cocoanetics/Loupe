@@ -38,6 +38,22 @@ struct RecordingSize: Equatable, Sendable {
     }
 }
 
+/// When `stop()` repeats the last frame so a still window keeps its length.
+///
+/// The container's duration comes from its last sample, not from the session
+/// end, so a window that sent one frame would play as one frame. Repeating that
+/// picture one frame before the end fixes the length for every player.
+enum RecordingTail {
+    static let frameInterval = CMTime(value: 1, timescale: 30)
+
+    /// The time to append the last frame again, or nil when the last sample
+    /// already reaches the frame before `held`.
+    static func repeatTime(last: CMTime, held: CMTime, frameInterval: CMTime = frameInterval) -> CMTime? {
+        let tail = CMTimeSubtract(held, frameInterval)
+        return CMTimeCompare(tail, last) > 0 ? tail : nil
+    }
+}
+
 /// Turning a region of the window into what ScreenCaptureKit films.
 ///
 /// Regions are **window-relative points, top-left origin** — unlike a capture
@@ -133,7 +149,11 @@ final class WindowRecording: NSObject, RecordingHandle, SCStreamOutput, SCStream
         var adaptor: AVAssetWriterInputPixelBufferAdaptor?
         var size: RecordingSize?
         var firstTime: CMTime?
+        /// When the first frame was appended, on the wall clock `stop()` reads.
+        var firstAt: Date?
         var lastTime: CMTime?
+        /// The buffer last handed to the adaptor, after any fitting.
+        var lastPixels: CVPixelBuffer?
         var frames = 0
         var resized = false
         var failure: String?
@@ -240,6 +260,8 @@ final class WindowRecording: NSObject, RecordingHandle, SCStreamOutput, SCStream
             if adaptor.append(output, withPresentationTime: time) {
                 state.frames += 1
                 state.lastTime = time
+                state.lastPixels = output
+                state.firstAt = state.firstAt ?? Date()
             } else {
                 state.failure = state.writer?.error?.localizedDescription ?? "the video writer failed"
             }
@@ -316,24 +338,39 @@ final class WindowRecording: NSObject, RecordingHandle, SCStreamOutput, SCStream
             return !state.stopped
         }
         guard first else { throw LoupeError.failed("this recording was already stopped") }
-        let duration = Date().timeIntervalSince(startedAt)
+        let stoppedAt = Date()
         // The stream may already be gone (the window closed); the file is still finished below.
         try? await stream.stopCapture()
         // Let any buffer already in flight land before the writer is closed.
         await withCheckedContinuation { continuation in queue.async { continuation.resume() } }
 
         withState { $0.closed = true }
-        let (writer, input, frames, resized, failure, opened, last) = withState {
-            ($0.writer, $0.input, $0.frames, $0.resized, $0.failure, $0.firstTime, $0.lastTime)
+        let (writer, input, adaptor, frames, resized, failure, opened, firstAt, last, lastPixels) = withState {
+            ($0.writer, $0.input, $0.adaptor, $0.frames, $0.resized, $0.failure, $0.firstTime, $0.firstAt,
+             $0.lastTime, $0.lastPixels)
         }
         guard let writer, let input, frames > 0, let last else {
             throw LoupeError.failed(
                 "no frames were recorded from the window"
                     + (failure.map { ": \($0)" } ?? " — it may have shown nothing, or the screen is locked"))
         }
-        input.markAsFinished()
+        // Measured from the first frame, not from `startedAt`: the stream takes a
+        // moment to start, and the caller's wait only begins once it has.
+        let duration = stoppedAt.timeIntervalSince(firstAt ?? startedAt)
         // Hold the last frame up to the moment of stopping; idle windows send nothing.
         let held = CMTimeAdd(opened ?? last, CMTime(seconds: duration, preferredTimescale: 600))
+        if let adaptor, let lastPixels, let tail = RecordingTail.repeatTime(last: last, held: held) {
+            // A real-time input may be briefly busy with the last frame; wait up to a second.
+            var waits = 0
+            while !input.isReadyForMoreMediaData, writer.status == .writing, waits < 200 {
+                try? await Task.sleep(for: .milliseconds(5))
+                waits += 1
+            }
+            if input.isReadyForMoreMediaData {
+                _ = adaptor.append(lastPixels, withPresentationTime: tail)
+            }
+        }
+        input.markAsFinished()
         writer.endSession(atSourceTime: max(held, last))
         await writer.finishWriting()
         guard writer.status == .completed else {
