@@ -6,7 +6,11 @@ import LoupeCore
 import Testing
 
 // The 5K encodes take about a second; a stuck one fails here instead of holding up CI.
-@Suite(.timeLimit(.minutes(1))) struct ScreenContentTranscoderTests {
+// One at a time, so CPU scaling at 5K doesn't starve the rest of the suite on a small runner.
+@Suite(.serialized, .timeLimit(.minutes(1))) struct ScreenContentTranscoderTests {
+    /// Built once and shared; tests only read it.
+    private static let sharedFiveK = Task { try await fiveKMovie() }
+
     @Test func picturesPastTheH264LimitAreScaledToFit() {
         #expect(ScreenContentTranscoder.encodedSize(width: 5120, height: 2880) == (4096, 2304))
         #expect(ScreenContentTranscoder.encodedSize(width: 2880, height: 5120) == (2304, 4096))
@@ -75,8 +79,7 @@ import Testing
     }
 
     @Test func aFiveKSourceIsScaledAndEncoded() async throws {
-        let source = try await Self.fiveKMovie()
-        defer { try? FileManager.default.removeItem(at: source) }
+        let source = try await Self.sharedFiveK.value
         let out = FileManager.default.temporaryDirectory.appendingPathComponent("5k-\(UUID()).mp4")
         defer { try? FileManager.default.removeItem(at: out) }
 
@@ -90,8 +93,7 @@ import Testing
     }
 
     @Test func aCropIsScaledOnlyWhenItIsStillTooLarge() async throws {
-        let source = try await Self.fiveKMovie()
-        defer { try? FileManager.default.removeItem(at: source) }
+        let source = try await Self.sharedFiveK.value
         let out = FileManager.default.temporaryDirectory.appendingPathComponent("crop-\(UUID()).mp4")
         defer { try? FileManager.default.removeItem(at: out) }
 
@@ -108,7 +110,9 @@ import Testing
     }
 
     @Test func thePipelineNamesTheScalingAndConsumesTheRawFile() async throws {
-        let raw = try await Self.fiveKMovie()
+        // The pipeline consumes its raw file, so it gets a copy of the shared one.
+        let raw = FileManager.default.temporaryDirectory.appendingPathComponent("raw-5k-\(UUID()).mov")
+        try FileManager.default.copyItem(at: try await Self.sharedFiveK.value, to: raw)
         defer { try? FileManager.default.removeItem(at: raw) }
         let out = FileManager.default.temporaryDirectory.appendingPathComponent("pipe-\(UUID()).mp4")
         defer { try? FileManager.default.removeItem(at: out) }
