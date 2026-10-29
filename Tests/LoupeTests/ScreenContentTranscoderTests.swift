@@ -151,7 +151,8 @@ import Testing
             })
         #expect(max(image.width, image.height) <= 800)
         #expect(image.height > image.width)
-        #expect(result.notes.contains { $0.contains("1668×2420 →") && $0.contains("(--max-size 800x800)") })
+        // The note names the frames as written, not the box they were fitted to.
+        #expect(result.notes.contains("gif: scaled 1668×2420 → \(image.width)×\(image.height) (--max-size 800x800)"))
     }
 
     @Test func aCropIsScaledOnlyWhenItIsStillTooLarge() async throws {

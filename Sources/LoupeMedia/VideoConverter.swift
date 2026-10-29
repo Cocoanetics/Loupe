@@ -80,15 +80,19 @@ public enum VideoConverter {
         generator.requestedTimeToleranceBefore = slack
         generator.requestedTimeToleranceAfter = slack
 
+        // What the generator really made: it keeps the shape exactly, so a side
+        // can come out a few pixels short of the fitted box.
+        var made: (width: Int, height: Int)?
         var result = try await encode(sampleCount: count, duration: duration, options: options) { index in
             let time = CMTime(seconds: Double(index) * step, preferredTimescale: 600)
             // A frame that fails to decode is skipped; the previous one is held.
             guard let image = try? await generator.image(at: time).image else { return nil }
+            if made == nil { made = (image.width, image.height) }
             return TimedFrame(image: image, time: time.seconds)
         }
-        if fitted != shown {
+        if fitted != shown, let made {
             result.notes.append(
-                "gif: scaled \(Int(shown.width))×\(Int(shown.height)) → \(Int(fitted.width))×\(Int(fitted.height)) "
+                "gif: scaled \(Int(shown.width))×\(Int(shown.height)) → \(made.width)×\(made.height) "
                     + "(--max-size \(options.maxSize))")
         }
         return result
