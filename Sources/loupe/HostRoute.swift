@@ -138,6 +138,8 @@ extension Capture {
             arguments["settle"] = .bool(capture.settle)
             arguments["scale"] = .double(options.scale)
             if let region = flags.region { arguments["region"] = .string(region) }
+            // The host measures pixels on the image it hands back, which is the one written here.
+            if flags.regionUnits == .pixels { arguments["regionUnits"] = .string("pixels") }
             return try await client.call("loupe_capture", arguments)
         }
         guard let shot = reply.images.last else {

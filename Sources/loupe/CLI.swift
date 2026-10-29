@@ -138,6 +138,8 @@ enum Viewport {
     }
 }
 
+extension RegionUnits: ExpressibleByArgument {}
+
 struct CaptureFlags: ParsableArguments {
     @Option(help: "Write the PNG here. Defaults to a file in the current directory.")
     var out: String?
@@ -164,8 +166,24 @@ struct CaptureFlags: ParsableArguments {
     @Option(help: "Seconds to wait for the screen to settle.")
     var settleTimeout: Double = 3.0
 
-    @Option(help: "Crop to a region, as x,y,w,h in target points.")
+    @Option(
+        help: """
+            Crop to a region, as x,y,w,h, origin at the top-left, x right, y down. In \
+            points (the default) it is the space `describe` reports frames in: global \
+            screen points for a mac: window (not window-relative — the capture notes the \
+            window's screen frame), device points for a simulator, CSS pixels for a page. \
+            Pixels are points × the scale. The applied crop is echoed as a note in both.
+            """)
     var region: String?
+
+    @Option(
+        help: """
+            What --region is measured in: `points`, or `pixels` of the full-resolution \
+            image the same capture writes uncropped (before --max-edge), so a rectangle \
+            read off a full screenshot works as is. E.g. a band 380 px down a 2800 px wide \
+            capture: --region 0,380,2800,320 --region-units pixels.
+            """)
+    var regionUnits: RegionUnits = .points
 
     @Option(help: "Downscale so the longest edge is at most this many pixels.")
     var maxEdge: Int?
@@ -181,7 +199,8 @@ struct CaptureFlags: ParsableArguments {
             }
         }
         return CaptureOptions(
-            region: frame, fullPage: fullPage, settle: settle, settleTimeout: settleTimeout)
+            region: frame, regionUnits: regionUnits, fullPage: fullPage, settle: settle,
+            settleTimeout: settleTimeout)
     }
 
     /// Apply post-processing that is independent of the surface.

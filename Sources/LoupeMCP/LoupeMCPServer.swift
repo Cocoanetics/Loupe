@@ -52,6 +52,19 @@ public actor LoupeMCPServer {
         MCPImage(data: try ImageOps.fit(png, maxEdge: maxEdge), mimeType: "image/png")
     }
 
+    /// Crop by pixels of the image `image(_:)` would return for `png` — which
+    /// `fit` may have shrunk — by cropping the full-resolution pixels they stand for.
+    private func returnedPixels(of png: Data, crop: Frame) throws -> Data {
+        let full = try ImageOps.decode(png)
+        let factor = min(1, Double(maxEdge) / Double(max(full.width, full.height, 1)))
+        return try ImageOps.crop(
+            png,
+            toPixels: CGRect(
+                x: crop.x / factor, y: crop.y / factor,
+                width: crop.width / factor, height: crop.height / factor)
+        ).png
+    }
+
     // MARK: - Tools
 
     /// List everything you can point Loupe at: running Mac apps with their window
@@ -74,7 +87,29 @@ public actor LoupeMCPServer {
     /// - Parameter target: What to capture.
     /// - Parameter fullPage: Web only — capture the whole scrollable page.
     /// - Parameter settle: Wait for the screen to stop changing first. Default true.
-    /// - Parameter region: Optional crop as `x,y,w,h` in target points.
+    ///
+    /// Regions are `x,y,w,h` with the origin at the **top-left**, x right, y down.
+    /// In `points` (the default) they are in the space `loupe_describe` reports
+    /// frames in, so an element's frame can be passed back as is:
+    ///
+    /// - Mac window: **global screen points**, not window-relative. A window at
+    ///   screen `200,150` has its top-left at region `200,150`.
+    /// - Simulator: device screen points. Web: CSS pixels of the viewport (or the
+    ///   page, with `fullPage`).
+    ///
+    /// Pixels are points × the backing scale (2 on Retina). The image returned here
+    /// is also downscaled so its longest edge is at most 1400 px, so its pixels are
+    /// often neither. With `regionUnits: "pixels"`, the region is measured on the
+    /// image this tool returns **uncropped**: a band 380 px down a returned 1400 px
+    /// wide full capture is `region: "0,380,1400,320", regionUnits: "pixels"`,
+    /// whatever the window's position or scale. The crop comes back at full
+    /// resolution (downscaled only if it is itself over 1400 px).
+    /// - Parameter target: What to capture.
+    /// - Parameter fullPage: Web only — capture the whole scrollable page.
+    /// - Parameter settle: Wait for the screen to stop changing first. Default true.
+    /// - Parameter region: Optional crop as `x,y,w,h`, top-left origin, in `regionUnits`.
+    /// - Parameter regionUnits: `points` (default; the space `loupe_describe` uses)
+    ///   or `pixels` of the image this tool returns uncropped.
     /// - Parameter viewport: Web viewport as `WxH` CSS pixels, default `1280x900`.
     /// - Parameter scale: Web backing scale, default 2.0.
     /// - Parameter profile: Named persistent web profile, so logins survive between calls.
@@ -84,15 +119,21 @@ public actor LoupeMCPServer {
         fullPage: Bool? = nil,
         settle: Bool? = nil,
         region: String? = nil,
+        regionUnits: String? = nil,
         viewport: String? = nil,
         scale: Double? = nil,
         profile: String? = nil
     ) async throws -> MCPImage {
+        let wanted = captureOptions(fullPage: fullPage, settle: settle, region: region)
+        let pixels = try Self.regionUnits(regionUnits) == .pixels
+        var whole = wanted
+        if pixels { whole.region = nil }
         let shot = try await Loupe.capture(
             try Target.parse(target),
             options: options(viewport: viewport, scale: scale, profile: profile),
-            capture: captureOptions(fullPage: fullPage, settle: settle, region: region))
-        return try image(shot.png)
+            capture: whole)
+        guard pixels, let crop = wanted.region else { return try image(shot.png) }
+        return try image(try returnedPixels(of: shot.png, crop: crop))
     }
 
     /// Read a target's element tree — one indented line per element, ending in
@@ -254,7 +295,8 @@ public actor LoupeMCPServer {
     ///   `.gif` name asks for the GIF alone.
     /// - Parameter duration: How long to film, e.g. `5s` or `500ms`. Alternative to `until`.
     /// - Parameter until: Film until this element shows up: `A|B`, `!X` as a failure (as in `wait`).
-    /// - Parameter region: Keep only `x,y,w,h` in target points (see `loupe_capture`).
+    /// - Parameter region: Keep only `x,y,w,h` in points, top-left origin. Unlike
+    ///   `loupe_capture`, a Mac window's region is window-relative here.
     /// - Parameter element: Keep only this element's frame, with 8 pt of padding.
     /// - Parameter steps: Ordered steps as `kind:argument`, the way `loupe --step` spells
     ///   them (`set:Email=a@b.c`, `press:Login`, `await:Dashboard@10`, `click:n:0.5,0.5`,
