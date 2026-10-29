@@ -1,3 +1,4 @@
+import Accelerate
 import AVFoundation
 import CoreGraphics
 import CoreMedia
@@ -10,6 +11,11 @@ public struct TranscodeResult: Sendable {
     public var sourceFrames: Int
     /// Samples written: only frames where the screen changed.
     public var writtenFrames: Int
+    /// Size of the encoded picture, after any crop and any scaling.
+    public var width: Int
+    public var height: Int
+    /// What the encoder had to give up, for a human: scaling, a bitrate fallback.
+    public var notes: [String]
 }
 
 /// A part of the screen to keep: points, origin top-left (see ``RecordCrop``).
@@ -31,7 +37,11 @@ public struct ScreenCrop: Sendable {
 /// - Variable frame rate: a sample is written only when the frame changed, using
 ///   the same detector as the GIF path, and the last one is held to the end.
 /// - Native resolution, optionally cropped to a region; UI text does not survive downscaling.
-/// - High quality (0.85) rather than a bitrate, so text edges stay clean.
+///   Only a picture past what H.264 can take (4096 on the long edge, 4096×2304 in
+///   area, level 5.2) is scaled down to fit, and the result says so: a 5K desktop
+///   would otherwise have no encoder at all.
+/// - High quality (0.85) rather than a bitrate, so text edges stay clean. Where the
+///   encoder takes no quality setting, an average bitrate sized to the picture.
 public enum ScreenContentTranscoder {
     /// Stricter than the GIF default: a video keeps subtle changes, a GIF is
     /// allowed to lose them for size.
@@ -48,6 +58,19 @@ public enum ScreenContentTranscoder {
         var adaptor: AVAssetWriterInputPixelBufferAdaptor
         var rect: CGRect
         var duration: CMTime
+        /// The encoded size; frames are scaled to it when it is not `rect`'s.
+        var width: Int
+        var height: Int
+        var notes: [String]
+
+        var isScaled: Bool { (width, height) != (Int(rect.width), Int(rect.height)) }
+    }
+
+    /// What the frame loop leaves behind.
+    private struct Tally {
+        var sourceFrames = 0
+        var written = 0
+        var lastKept: (pixels: CVPixelBuffer, time: CMTime)?
     }
 
     public static func transcode(
@@ -55,35 +78,59 @@ public enum ScreenContentTranscoder {
         threshold: Double = defaultThreshold
     ) async throws -> TranscodeResult {
         let pipeline = try await makePipeline(from: source, to: destination, crop: crop)
-        var detector = FrameChangeDetector(threshold: threshold)
-        var sourceFrames = 0
-        var written = 0
-        var lastKept: (pixels: CVPixelBuffer, time: CMTime)?
-        while let sample = pipeline.output.copyNextSampleBuffer() {
-            guard let full = CMSampleBufferGetImageBuffer(sample) else { continue }
-            sourceFrames += 1
-            let pixels = crop == nil
-                ? full : try cropped(full, to: pipeline.rect, pool: pipeline.adaptor.pixelBufferPool)
-            var image: CGImage?
-            VTCreateCGImageFromCVPixelBuffer(pixels, options: nil, imageOut: &image)
-            // A frame that cannot be inspected is kept, not guessed at.
-            if let image, !detector.isChange(image) { continue }
-            try await waitUntilReady(pipeline)
-            let time = max(CMSampleBufferGetPresentationTimeStamp(sample), .zero)
-            guard pipeline.adaptor.append(pixels, withPresentationTime: time) else { break }
-            written += 1
-            lastKept = (pixels, time)
+        // Decoding, cropping and scaling block; on a thread of their own, a slow
+        // or stuck frame holds up this transcode, not Swift's cooperative pool.
+        let carried = Unchecked(pipeline)
+        let carriedTally: Unchecked<Tally> = try await withCheckedThrowingContinuation { continuation in
+            DispatchQueue(label: "com.cocoanetics.loupe.transcode").async {
+                continuation.resume(with: Result {
+                    Unchecked(try encodeFrames(carried.value, cropping: crop != nil, threshold: threshold))
+                })
+            }
         }
+        let tally = carriedTally.value
         if pipeline.reader.status == .failed {
             pipeline.writer.cancelWriting()
             throw MediaError.unreadable(pipeline.reader.error?.localizedDescription ?? "reading failed")
         }
-        try await finish(pipeline, repeating: lastKept)
-        guard pipeline.writer.status == .completed, written > 0 else {
+        try await finish(pipeline, repeating: tally.lastKept)
+        guard pipeline.writer.status == .completed, tally.written > 0 else {
             throw MediaError.encodeFailed(
                 pipeline.writer.error?.localizedDescription ?? "the encoder wrote no frames")
         }
-        return TranscodeResult(sourceFrames: sourceFrames, writtenFrames: written)
+        return TranscodeResult(
+            sourceFrames: tally.sourceFrames, writtenFrames: tally.written, width: pipeline.width,
+            height: pipeline.height, notes: pipeline.notes)
+    }
+
+    /// Reads, crops, scales and appends every changed frame. Blocks; call it off the cooperative pool.
+    private static func encodeFrames(_ pipeline: Pipeline, cropping: Bool, threshold: Double) throws -> Tally {
+        var detector = FrameChangeDetector(threshold: threshold)
+        var tally = Tally()
+        while let sample = pipeline.output.copyNextSampleBuffer() {
+            guard let full = CMSampleBufferGetImageBuffer(sample) else { continue }
+            tally.sourceFrames += 1
+            let pool = pipeline.adaptor.pixelBufferPool
+            // The adaptor's pool holds encoded-size buffers, so a crop that is
+            // scaled afterwards needs its own.
+            var pixels = cropping
+                ? try cropped(full, to: pipeline.rect, pool: pipeline.isScaled ? nil : pool) : full
+            if pipeline.isScaled {
+                pixels = try scaled(pixels, width: pipeline.width, height: pipeline.height, pool: pool)
+            }
+            var image: CGImage?
+            VTCreateCGImageFromCVPixelBuffer(pixels, options: nil, imageOut: &image)
+            // A frame that cannot be inspected is kept, not guessed at.
+            if let image, !detector.isChange(image) { continue }
+            while !pipeline.input.isReadyForMoreMediaData, pipeline.writer.status != .failed {
+                Thread.sleep(forTimeInterval: 0.005)
+            }
+            let time = max(CMSampleBufferGetPresentationTimeStamp(sample), .zero)
+            guard pipeline.adaptor.append(pixels, withPresentationTime: time) else { break }
+            tally.written += 1
+            tally.lastKept = (pixels, time)
+        }
+        return tally
     }
 
     private static func waitUntilReady(_ pipeline: Pipeline) async throws {
@@ -137,18 +184,24 @@ public enum ScreenContentTranscoder {
         guard reader.canAdd(output) else { throw MediaError.unreadable("cannot read the video track") }
         reader.add(output)
 
+        let (width, height) = encodedSize(width: Int(rect.width), height: Int(rect.height))
+        var notes = (width, height) == (Int(rect.width), Int(rect.height))
+            ? [] : ["h264: scaled \(Int(rect.width))×\(Int(rect.height)) → \(width)×\(height) (H.264 limit)"]
+
         try? FileManager.default.removeItem(at: destination)
         let writer = try AVAssetWriter(outputURL: destination, fileType: .mp4)
-        let input = AVAssetWriterInput(
-            mediaType: .video, outputSettings: videoSettings(width: Int(rect.width), height: Int(rect.height)))
-        input.transform = transform
+        // AVAssetWriterInput raises an Objective-C exception, which Swift cannot
+        // catch, for settings the encoder refuses; ask first.
+        let settings = try applicableSettings(width: width, height: height, writer: writer, notes: &notes)
+        let input = AVAssetWriterInput(mediaType: .video, outputSettings: settings)
+        input.transform = scaled(transform, from: rect.size, toWidth: width, height: height)
         input.expectsMediaDataInRealTime = false
         let adaptor = AVAssetWriterInputPixelBufferAdaptor(
             assetWriterInput: input,
             sourcePixelBufferAttributes: [
                 kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA,
-                kCVPixelBufferWidthKey as String: Int(rect.width),
-                kCVPixelBufferHeightKey as String: Int(rect.height)
+                kCVPixelBufferWidthKey as String: width,
+                kCVPixelBufferHeightKey as String: height
             ])
         guard writer.canAdd(input) else { throw MediaError.encodeFailed("cannot write H.264") }
         writer.add(input)
@@ -162,26 +215,120 @@ public enum ScreenContentTranscoder {
         writer.startSession(atSourceTime: .zero)
         return Pipeline(
             reader: reader, output: output, writer: writer, input: input, adaptor: adaptor,
-            rect: rect, duration: duration)
+            rect: rect, duration: duration, width: width, height: height, notes: notes)
     }
 
-    private static func videoSettings(width: Int, height: Int) -> [String: Any] {
+    /// `transform` for frames scaled from `size` to `width`×`height`. The rotation
+    /// stays; the translation that moves a rotated picture back into view refers
+    /// to the old size, so it is scaled with the picture as it is displayed.
+    static func scaled(_ transform: CGAffineTransform, from size: CGSize, toWidth width: Int, height: Int)
+        -> CGAffineTransform {
+        guard size != CGSize(width: width, height: height), size.width > 0, size.height > 0 else {
+            return transform
+        }
+        var linear = transform
+        linear.tx = 0
+        linear.ty = 0
+        let before = CGRect(origin: .zero, size: size).applying(linear)
+        let after = CGRect(x: 0, y: 0, width: width, height: height).applying(linear)
+        // Whatever offset the track had beyond bringing the picture into view, scaled.
+        linear.tx = -after.minX + (transform.tx + before.minX) * after.width / before.width
+        linear.ty = -after.minY + (transform.ty + before.minY) * after.height / before.height
+        return linear
+    }
+
+    /// The quality-based settings, or an average bitrate where the encoder for
+    /// this size takes no quality setting; an error where it takes neither.
+    static func applicableSettings(width: Int, height: Int, writer: AVAssetWriter, notes: inout [String])
+        throws -> [String: Any] {
+        let preferred = videoSettings(width: width, height: height, rate: [AVVideoQualityKey: quality])
+        if writer.canApply(outputSettings: preferred, forMediaType: .video) { return preferred }
+        let bitsPerSecond = width * height * 4
+        let fallback = videoSettings(
+            width: width, height: height, rate: [AVVideoAverageBitRateKey: bitsPerSecond])
+        guard writer.canApply(outputSettings: fallback, forMediaType: .video) else {
+            throw MediaError.encodeFailed("the encoder cannot encode \(width)×\(height) H.264")
+        }
+        notes.append(
+            "h264: no quality setting at \(width)×\(height); used an average bitrate of "
+                + "\(bitsPerSecond / 1_000_000) Mbit/s")
+        return fallback
+    }
+
+    private static func videoSettings(width: Int, height: Int, rate: [String: Any]) -> [String: Any] {
         [
             AVVideoCodecKey: AVVideoCodecType.h264,
             AVVideoWidthKey: width,
             AVVideoHeightKey: height,
-            AVVideoCompressionPropertiesKey: [
+            AVVideoCompressionPropertiesKey: rate.merging([
                 AVVideoProfileLevelKey: AVVideoProfileLevelH264HighAutoLevel,
-                AVVideoQualityKey: quality,
                 // No B-frames: the pictures are sparse, and reordering would
                 // only complicate the presentation times of a VFR stream.
                 AVVideoAllowFrameReorderingKey: false
-            ]
+            ]) { kept, _ in kept }
         ]
+    }
+
+    /// H.264's frame-size limits as the encoders apply them: 4096 on the long
+    /// edge, and level 5.2's 36 864 macroblocks (4096×2304) in area.
+    static let maxEdge = 4096
+    static let maxMacroblocks = 36_864
+
+    /// `width`×`height` scaled down, keeping its shape and even sides, until H.264
+    /// takes it; unchanged when it already fits.
+    static func encodedSize(width: Int, height: Int) -> (width: Int, height: Int) {
+        func fits(_ width: Int, _ height: Int) -> Bool {
+            max(width, height) <= maxEdge && ((width + 15) / 16) * ((height + 15) / 16) <= maxMacroblocks
+        }
+        guard width > 0, height > 0, !fits(width, height) else { return (width, height) }
+        let area = Double(maxMacroblocks * 256) / (Double(width) * Double(height))
+        var factor = min(Double(maxEdge) / Double(max(width, height)), area.squareRoot())
+        while true {
+            // The epsilon keeps an exact fit, such as 5120 × 0.8, from flooring to one less.
+            let scaledWidth = max(2, Int(Double(width) * factor + 1e-6) & ~1)
+            let scaledHeight = max(2, Int(Double(height) * factor + 1e-6) & ~1)
+            if fits(scaledWidth, scaledHeight) { return (scaledWidth, scaledHeight) }
+            factor *= 0.995
+        }
     }
 }
 
 extension ScreenContentTranscoder {
+    /// Scales a 32-bit BGRA `source` to `width`×`height`, into a buffer from the writer's pool.
+    ///
+    /// On the CPU with vImage rather than `VTPixelTransferSession`: that one wants
+    /// a hardware scaler, and where there is none (a virtual Mac) it can block
+    /// instead of failing.
+    static func scaled(_ source: CVPixelBuffer, width: Int, height: Int, pool: CVPixelBufferPool?) throws
+        -> CVPixelBuffer {
+        var made: CVPixelBuffer?
+        if let pool {
+            CVPixelBufferPoolCreatePixelBuffer(nil, pool, &made)
+        } else {
+            CVPixelBufferCreate(nil, width, height, kCVPixelFormatType_32BGRA, nil, &made)
+        }
+        guard let target = made else { throw MediaError.encodeFailed("could not allocate a frame") }
+        CVPixelBufferLockBaseAddress(source, .readOnly)
+        CVPixelBufferLockBaseAddress(target, [])
+        defer {
+            CVPixelBufferUnlockBaseAddress(target, [])
+            CVPixelBufferUnlockBaseAddress(source, .readOnly)
+        }
+        guard let from = CVPixelBufferGetBaseAddress(source),
+            let destination = CVPixelBufferGetBaseAddress(target)
+        else { throw MediaError.encodeFailed("could not map a frame") }
+        var input = vImage_Buffer(
+            data: from, height: vImagePixelCount(CVPixelBufferGetHeight(source)),
+            width: vImagePixelCount(CVPixelBufferGetWidth(source)), rowBytes: CVPixelBufferGetBytesPerRow(source))
+        var output = vImage_Buffer(
+            data: destination, height: vImagePixelCount(CVPixelBufferGetHeight(target)),
+            width: vImagePixelCount(CVPixelBufferGetWidth(target)), rowBytes: CVPixelBufferGetBytesPerRow(target))
+        // Four 8-bit channels; their order does not matter to the scaler.
+        guard vImageScale_ARGB8888(&input, &output, nil, vImage_Flags(kvImageHighQualityResampling)) == kvImageNoError
+        else { throw MediaError.encodeFailed("could not scale a frame") }
+        return target
+    }
+
     /// Copies `rect` out of a 32-bit BGRA buffer, row by row.
     static func cropped(_ source: CVPixelBuffer, to rect: CGRect, pool: CVPixelBufferPool?) throws
         -> CVPixelBuffer {

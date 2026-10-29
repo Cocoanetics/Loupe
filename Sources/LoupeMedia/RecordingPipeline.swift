@@ -155,6 +155,7 @@ public enum RecordingPipeline {
         do {
             let done = try await ScreenContentTranscoder.transcode(from: raw, to: video, crop: crop)
             return ["h264: \(done.writtenFrames) of \(done.sourceFrames) frames written (variable frame rate)"]
+                + done.notes
         } catch {
             try? FileManager.default.removeItem(at: video)
             let reason = error.localizedDescription

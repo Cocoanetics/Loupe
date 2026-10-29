@@ -9,11 +9,11 @@ import Testing
 struct CallTraceTests {
 
     @Test func timeoutNamesTheStepItWasStuckIn() async throws {
-        let started = Date()
+        let started = ContinuousClock.now
         do {
             _ = try await CallTrace.run("loupe_list_targets", seconds: 0.3) {
                 try await CallTrace.during("`xcrun simctl list devices --json`") {
-                    try await Task.sleep(nanoseconds: 5_000_000_000)
+                    try await Task.sleep(nanoseconds: 30_000_000_000)
                 }
             }
             Issue.record("the call should have run out of time")
@@ -21,7 +21,7 @@ struct CallTraceTests {
             #expect(error.message.contains("loupe_list_targets did not finish within 0s"))
             #expect(error.message.contains("stuck in: `xcrun simctl list devices --json` (for"))
         }
-        #expect(Date().timeIntervalSince(started) < 3)
+        #expect(ContinuousClock.now - started < .seconds(10))  // the 0.3s timeout, not the 30s step
     }
 
     @Test func concurrentStepsAreAllNamed() async throws {
