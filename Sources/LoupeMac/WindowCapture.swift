@@ -49,10 +49,14 @@ struct CaptureTarget: Sendable {
 /// returned nil for exactly the windows this package cares about — the
 /// minimized, hidden and occluded ones. SCK renders those live.
 enum WindowCapture {
-    static let screenRecordingRemedy =
+    /// Names the app macOS actually charges the grant to — for a CLI that is
+    /// the terminal or agent app it runs under, not `loupe` — so the user turns
+    /// on the right row instead of adding a binary the system never consults.
+    static var screenRecordingRemedy: String {
         "System Settings > Privacy & Security > Screen & System Audio Recording, "
-        + "then add and enable the binary running Loupe (for a CLI that is the terminal "
-        + "or the tool binary itself), and restart it."
+            + "then enable \(PrivacyAttribution.current.settingsEntry) and restart it. "
+            + "`loupe doctor` shows the status; Loupe checks first and never asks the system mid-capture."
+    }
 
     /// Bring up the process's CoreGraphics window-server connection.
     ///
