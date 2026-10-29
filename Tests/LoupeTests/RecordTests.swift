@@ -178,9 +178,9 @@ private final class FakeRecorder: RecordingDriver, @unchecked Sendable {
     // MARK: bounds
 
     @Test func theCapCoversActionsThatRunLongerThanIt() async throws {
-        let recorder = FakeRecorder(actionDuration: 3)
+        let recorder = FakeRecorder(actionDuration: 30)
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("fake-\(UUID()).mp4")
-        let started = Date()
+        let started = ContinuousClock.now
         await #expect(throws: LoupeError.self) {
             _ = try await Loupe.recordSession(
                 on: recorder,
@@ -188,7 +188,7 @@ private final class FakeRecorder: RecordingDriver, @unchecked Sendable {
                     url: url, record: RecordOptions(maxDuration: 0.3), region: nil,
                     actions: [.navigate("x")], stop: .after(0.1)))
         }
-        #expect(Date().timeIntervalSince(started) < 2)
+        #expect(ContinuousClock.now - started < .seconds(10))  // the 0.3s cap, not the 30s action
         // Whatever went wrong, the recording was still stopped.
         #expect(recorder.stopCount == 1)
     }
@@ -196,14 +196,14 @@ private final class FakeRecorder: RecordingDriver, @unchecked Sendable {
     @Test func theClosingWaitGetsOnlyWhatTheActionsLeft() async throws {
         let recorder = FakeRecorder(actionDuration: 0.25)
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("fake-\(UUID()).mp4")
-        let started = Date()
+        let started = ContinuousClock.now
         _ = try await Loupe.recordSession(
             on: recorder,
             Loupe.Session(
                 url: url, record: RecordOptions(maxDuration: 0.4), region: nil,
-                actions: [.navigate("x")], stop: .after(5)))
-        // 0.25s of action plus at most the remaining 0.15s, not a full 5s tail.
-        #expect(Date().timeIntervalSince(started) < 2)
+                actions: [.navigate("x")], stop: .after(30)))
+        // 0.25s of action plus at most the remaining 0.15s, not a full 30s tail.
+        #expect(ContinuousClock.now - started < .seconds(10))
         #expect(recorder.stopCount == 1)
     }
 
@@ -243,19 +243,19 @@ private final class FakeRecorder: RecordingDriver, @unchecked Sendable {
     @Test func cancellingTheCallerStopsActionsAtOnceAndStillFinalizes() async throws {
         let recorder = FakeRecorder(actionDuration: 30)
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("fake-\(UUID()).mp4")
-        let started = Date()
+        let started = ContinuousClock.now
         let task = Task {
             try await Loupe.recordSession(
                 on: recorder,
                 Loupe.Session(
                     url: url, record: RecordOptions(maxDuration: 60), region: nil,
-                    actions: [.navigate("x")], stop: .after(5)))
+                    actions: [.navigate("x")], stop: .after(30)))
         }
         try await Task.sleep(for: .milliseconds(200))
         task.cancel()
         let result = try await task.value
-        // Ctrl-C is a graceful stop: finalized and returned, not 30s or 60s later.
-        #expect(Date().timeIntervalSince(started) < 3)
+        // Ctrl-C is a graceful stop: finalized and returned, not after the 30s action or wait.
+        #expect(ContinuousClock.now - started < .seconds(10))
         #expect(result.url == url)
         #expect(recorder.stopCount == 1)
     }
