@@ -170,7 +170,7 @@ public enum ScreenContentTranscoder {
         // catch, for settings the encoder refuses; ask first.
         let settings = try applicableSettings(width: width, height: height, writer: writer, notes: &notes)
         let input = AVAssetWriterInput(mediaType: .video, outputSettings: settings)
-        input.transform = transform
+        input.transform = scaled(transform, from: rect.size, toWidth: width, height: height)
         input.expectsMediaDataInRealTime = false
         let adaptor = AVAssetWriterInputPixelBufferAdaptor(
             assetWriterInput: input,
@@ -206,6 +206,25 @@ public enum ScreenContentTranscoder {
         else { throw MediaError.encodeFailed("cannot scale \(rectWidth)×\(rectHeight) for H.264") }
         notes.append("h264: scaled \(rectWidth)×\(rectHeight) → \(width)×\(height) (H.264 limit)")
         return scaler
+    }
+
+    /// `transform` for frames scaled from `size` to `width`×`height`. The rotation
+    /// stays; the translation that moves a rotated picture back into view refers
+    /// to the old size, so it is scaled with the picture as it is displayed.
+    static func scaled(_ transform: CGAffineTransform, from size: CGSize, toWidth width: Int, height: Int)
+        -> CGAffineTransform {
+        guard size != CGSize(width: width, height: height), size.width > 0, size.height > 0 else {
+            return transform
+        }
+        var linear = transform
+        linear.tx = 0
+        linear.ty = 0
+        let before = CGRect(origin: .zero, size: size).applying(linear)
+        let after = CGRect(x: 0, y: 0, width: width, height: height).applying(linear)
+        // Whatever offset the track had beyond bringing the picture into view, scaled.
+        linear.tx = -after.minX + (transform.tx + before.minX) * after.width / before.width
+        linear.ty = -after.minY + (transform.ty + before.minY) * after.height / before.height
+        return linear
     }
 
     /// The quality-based settings, or an average bitrate where the encoder for

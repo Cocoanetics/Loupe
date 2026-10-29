@@ -28,6 +28,36 @@ import Testing
         }
     }
 
+    @Test func aRotationIsKeptAndItsTranslationScaled() {
+        let quarter = CGAffineTransform(a: 0, b: 1, c: -1, d: 0, tx: 2880, ty: 0)
+        let scaled = ScreenContentTranscoder.scaled(
+            quarter, from: CGSize(width: 5120, height: 2880), toWidth: 4096, height: 2304)
+        #expect(scaled == CGAffineTransform(a: 0, b: 1, c: -1, d: 0, tx: 2304, ty: 0))
+        let half = CGAffineTransform(a: -1, b: 0, c: 0, d: -1, tx: 5120, ty: 2880)
+        #expect(
+            ScreenContentTranscoder.scaled(
+                half, from: CGSize(width: 5120, height: 2880), toWidth: 4096, height: 2304)
+                == CGAffineTransform(a: -1, b: 0, c: 0, d: -1, tx: 4096, ty: 2304))
+        // Not scaled: whatever the track had, untouched.
+        #expect(
+            ScreenContentTranscoder.scaled(
+                quarter, from: CGSize(width: 1940, height: 1244), toWidth: 1940, height: 1244) == quarter)
+    }
+
+    @Test func aRotatedFiveKSourceKeepsItsPictureInView() async throws {
+        let quarter = CGAffineTransform(a: 0, b: 1, c: -1, d: 0, tx: 2880, ty: 0)
+        let source = try await Self.fiveKMovie(transform: quarter)
+        defer { try? FileManager.default.removeItem(at: source) }
+        let out = FileManager.default.temporaryDirectory.appendingPathComponent("rot-\(UUID()).mp4")
+        defer { try? FileManager.default.removeItem(at: out) }
+
+        _ = try await ScreenContentTranscoder.transcode(from: source, to: out)
+        let track = try #require(try await AVURLAsset(url: out).loadTracks(withMediaType: .video).first)
+        let transform = try await track.load(.preferredTransform)
+        let shown = CGRect(x: 0, y: 0, width: 4096, height: 2304).applying(transform)
+        #expect(shown == CGRect(x: 0, y: 0, width: 2304, height: 4096))
+    }
+
     @Test func settingsAreCheckedBeforeTheInputIsMade() throws {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("settings-\(UUID()).mp4")
         let writer = try AVAssetWriter(outputURL: url, fileType: .mp4)
@@ -91,7 +121,7 @@ import Testing
 
     /// Two different solid frames at 5120×2880, written the way the Mac recorder
     /// writes its raw file: plain H.264 with no compression properties.
-    private static func fiveKMovie() async throws -> URL {
+    private static func fiveKMovie(transform: CGAffineTransform = .identity) async throws -> URL {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("raw-5k-\(UUID()).mov")
         let width = 5120
         let height = 2880
@@ -100,6 +130,7 @@ import Testing
             mediaType: .video,
             outputSettings: [AVVideoCodecKey: AVVideoCodecType.h264, AVVideoWidthKey: width, AVVideoHeightKey: height])
         input.expectsMediaDataInRealTime = false
+        input.transform = transform
         let adaptor = AVAssetWriterInputPixelBufferAdaptor(
             assetWriterInput: input,
             sourcePixelBufferAttributes: [
