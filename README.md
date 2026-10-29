@@ -433,6 +433,19 @@ loupe window minimize mac:Preview
 loupe window raise mac:Notes        # forward within its app, without activating it
 ```
 
+`close` also works in bulk. `--title` takes a glob (`'CRATEFLOW*'` must match the
+whole title) or a plain substring, `--all` closes every match instead of refusing
+when there is more than one, and `--answer` presses the named button when closing
+puts up a save sheet or alert. Straight and curly apostrophes match, so `"Don't Save"`
+finds Mail's `Don’t Save`. Each window is reported as closed, answered or left open,
+and one left open makes the exit status 1:
+
+```bash
+loupe list --app Mail --title 'CRATEFLOW*'              # just the matching windows
+loupe window close mac:Mail --title 'CRATEFLOW*' --all --dry-run
+loupe window close mac:Mail --title 'CRATEFLOW*' --all --answer "Don't Save"
+```
+
 **Loupe never sends Apple Events.** macOS Automation consent is per-application
 and blocks on a user prompt — so the first `osascript` call against a new app
 either stops for a dialog or, headless, hangs until it times out. That makes

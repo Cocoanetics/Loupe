@@ -74,7 +74,7 @@ extension MacDriver {
     /// A window's own control button, found by accessibility subrole rather than
     /// by position or label — the buttons are unlabeled, and their order differs
     /// between apps and localizations.
-    private static func windowButton(_ window: AXUIElement, subrole: String) -> AXUIElement? {
+    static func windowButton(_ window: AXUIElement, subrole: String) -> AXUIElement? {
         AXAPI.children(window).first { AXAPI.string($0, kAXSubroleAttribute) == subrole }
     }
 
