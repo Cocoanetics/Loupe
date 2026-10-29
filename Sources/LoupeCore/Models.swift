@@ -125,6 +125,9 @@ public struct Capture: Sendable {
     /// Free-form notes worth surfacing next to the image (e.g. "window was
     /// occluded", "simulator booted on demand").
     public var notes: [String]
+    /// The crop that was applied, when ``CaptureOptions/region`` was set — after
+    /// clipping, so it says what the image actually shows.
+    public var crop: CaptureCrop?
 
     public init(
         png: Data,
@@ -132,7 +135,8 @@ public struct Capture: Sendable {
         scale: Double,
         target: String,
         timestamp: Date = Date(),
-        notes: [String] = []
+        notes: [String] = [],
+        crop: CaptureCrop? = nil
     ) {
         self.png = png
         self.pointSize = pointSize
@@ -140,6 +144,7 @@ public struct Capture: Sendable {
         self.target = target
         self.timestamp = timestamp
         self.notes = notes
+        self.crop = crop
     }
 
     public var pixelSize: CGSize {
@@ -217,8 +222,11 @@ public struct ActionResult: Sendable {
 }
 
 public struct CaptureOptions: Sendable {
-    /// Capture only this sub-rectangle, in target points.
+    /// Capture only this sub-rectangle, top-left origin, measured in
+    /// ``regionUnits`` — target points unless asked otherwise.
     public var region: Frame?
+    /// What ``region`` is measured in.
+    public var regionUnits: RegionUnits
     /// Web only: capture the full scrollable page rather than the viewport.
     public var fullPage: Bool
     /// Wait for the screen to stop changing first (recommended before any
@@ -229,11 +237,13 @@ public struct CaptureOptions: Sendable {
 
     public init(
         region: Frame? = nil,
+        regionUnits: RegionUnits = .points,
         fullPage: Bool = false,
         settle: Bool = true,
         settleTimeout: Double = 3.0
     ) {
         self.region = region
+        self.regionUnits = regionUnits
         self.fullPage = fullPage
         self.settle = settle
         self.settleTimeout = settleTimeout

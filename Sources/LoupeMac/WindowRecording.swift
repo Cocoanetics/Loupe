@@ -40,9 +40,9 @@ struct RecordingSize: Equatable, Sendable {
 
 /// Turning a region of the window into what ScreenCaptureKit films.
 ///
-/// Regions are **window-relative points, top-left origin**, as `capture --region`
-/// documents them. An element's frame arrives in global screen points and is
-/// moved into the window first.
+/// Regions are **window-relative points, top-left origin** — unlike a capture
+/// region, which is in global screen points. An element's frame arrives in global
+/// screen points and is moved into the window first.
 enum WindowRegion {
     struct Source {
         var rect: CGRect

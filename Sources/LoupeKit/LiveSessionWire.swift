@@ -97,19 +97,23 @@ extension LiveSession {
 
     struct CaptureWire: Codable {
         var region: Frame?
+        // Optional so an older peer's payload still decodes; absent means points.
+        var regionUnits: RegionUnits?
         var fullPage: Bool
         var settle: Bool
         var settleTimeout: Double
 
         init(_ options: CaptureOptions) {
             region = options.region
+            regionUnits = options.regionUnits
             fullPage = options.fullPage
             settle = options.settle
             settleTimeout = options.settleTimeout
         }
         var options: CaptureOptions {
             CaptureOptions(
-                region: region, fullPage: fullPage, settle: settle, settleTimeout: settleTimeout)
+                region: region, regionUnits: regionUnits ?? .points, fullPage: fullPage,
+                settle: settle, settleTimeout: settleTimeout)
         }
     }
 
@@ -145,6 +149,7 @@ extension LiveSession {
         var scale: Double
         var target: String
         var notes: [String]
+        var crop: CaptureCrop?
 
         init(_ shot: Capture) {
             pngBase64 = shot.png.base64EncodedString()
@@ -153,12 +158,13 @@ extension LiveSession {
             scale = shot.scale
             target = shot.target
             notes = shot.notes
+            crop = shot.crop
         }
         var capture: Capture {
             Capture(
                 png: Data(base64Encoded: pngBase64) ?? Data(),
                 pointSize: CGSize(width: width, height: height),
-                scale: scale, target: target, notes: notes)
+                scale: scale, target: target, notes: notes, crop: crop)
         }
     }
 

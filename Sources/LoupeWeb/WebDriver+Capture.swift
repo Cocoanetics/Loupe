@@ -35,12 +35,52 @@ extension WebDriver {
         notes += scaleNotes(achieved: achieved, state: attempt.state)
         notes += dialogHandler?.drainDialogs() ?? []
 
+        let kept = try keep(options, of: attempt, scale: achieved)
+        if let crop = kept.crop { notes.append(crop.note) }
+
         return Capture(
-            png: attempt.snapshot.png,
-            pointSize: attempt.pointRect.size,
+            png: kept.png,
+            pointSize: CGSize(width: kept.points.width, height: kept.points.height),
             scale: achieved,
             target: targetDescription + (options.fullPage ? " (full page)" : ""),
-            notes: notes)
+            notes: notes,
+            crop: kept.crop)
+    }
+
+    /// The image to hand back and the crop that made it. A point region was
+    /// already applied by the snapshot; a pixel region is cut from the uncropped
+    /// snapshot here, by its measured pixels, because WebKit does not always
+    /// render at the scale it was asked for. Both capture areas start at 0,0, so
+    /// the uncropped image's pixels are points times the achieved scale.
+    private func keep(_ options: CaptureOptions, of attempt: CaptureAttempt, scale achieved: Double)
+        throws -> Kept {
+        let rect = attempt.pointRect
+        let whole = Frame(x: rect.minX, y: rect.minY, width: rect.width, height: rect.height)
+        guard let region = options.region else { return Kept(png: attempt.snapshot.png, points: whole) }
+        guard options.regionUnits == .pixels else {
+            let pixels = Frame(
+                x: rect.minX * achieved, y: rect.minY * achieved,
+                width: rect.width * achieved, height: rect.height * achieved)
+            return Kept(
+                png: attempt.snapshot.png, points: whole, crop: CaptureCrop(points: whole, pixels: pixels))
+        }
+        let cut = try ImageOps.crop(
+            attempt.snapshot.png,
+            toPixels: CGRect(x: region.x, y: region.y, width: region.width, height: region.height))
+        let scale = max(achieved, 0.0001)
+        let points = Frame(
+            x: rect.minX + cut.kept.minX / scale, y: rect.minY + cut.kept.minY / scale,
+            width: cut.kept.width / scale, height: cut.kept.height / scale)
+        let pixels = Frame(
+            x: cut.kept.minX, y: cut.kept.minY, width: cut.kept.width, height: cut.kept.height)
+        return Kept(png: cut.png, points: points, crop: CaptureCrop(points: points, pixels: pixels))
+    }
+
+    /// What `keep` hands back: the image, the area it shows, and the crop if any.
+    private struct Kept {
+        var png: Data
+        var points: Frame
+        var crop: CaptureCrop?
     }
 
     /// One snapshot and the context needed to report it honestly: the CSS-pixel
@@ -60,7 +100,7 @@ extension WebDriver {
     ) async throws -> CaptureAttempt {
         guard options.fullPage else {
             let area = try clipRegion(
-                options.region, to: CGRect(origin: .zero, size: webView.bounds.size))
+                pointRegion(options), to: CGRect(origin: .zero, size: webView.bounds.size))
             return CaptureAttempt(
                 snapshot: try await snapshotImage(webView, window, of: area.rect),
                 pointRect: area.rect, state: state, notes: area.notes)
@@ -70,7 +110,7 @@ extension WebDriver {
         do {
             let page = try await growToDocumentHeight(
                 webView: webView, window: window, state: state, options: options)
-            let area = try clipRegion(options.region, to: page.rect)
+            let area = try clipRegion(pointRegion(options), to: page.rect)
             let snapshot = try await snapshotImage(webView, window, of: area.rect)
             await restoreLayout(height: restoreHeight, scroll: restoreScroll)
             return CaptureAttempt(
@@ -129,6 +169,12 @@ extension WebDriver {
             rect: CGRect(x: 0, y: 0, width: viewport.width, height: height),
             state: settled,
             notes: notes)
+    }
+
+    /// The region the snapshot itself is clipped to: a pixel region is cut from
+    /// the whole snapshot afterwards instead (see `keep`).
+    private func pointRegion(_ options: CaptureOptions) -> Frame? {
+        options.regionUnits == .points ? options.region : nil
     }
 
     /// Intersect a caller-supplied region with the area actually being captured.

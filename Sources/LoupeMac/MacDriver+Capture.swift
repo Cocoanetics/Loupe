@@ -32,8 +32,12 @@ extension MacDriver {
 
         var png = shot.png
         var pointSize = shot.pointSize
-        if let region = options.region {
-            (png, pointSize) = try crop(shot, to: region, notes: &notes)
+        var applied: CaptureCrop?
+        if let region = options.regionInPoints(scale: shot.scale, origin: shot.windowFrame.origin) {
+            let kept: CaptureCrop
+            (png, kept) = try crop(shot, to: region, as: options, notes: &notes)
+            pointSize = CGSize(width: kept.points.width, height: kept.points.height)
+            applied = kept
         }
 
         return Capture(
@@ -41,7 +45,8 @@ extension MacDriver {
             pointSize: pointSize,
             scale: shot.scale,
             target: resolvedDescription,
-            notes: notes)
+            notes: notes,
+            crop: applied)
     }
 
     /// Everything ScreenCaptureKit needs to find this exact window again.
@@ -96,10 +101,10 @@ extension MacDriver {
         return notes
     }
 
-    /// Crop to a region given in global screen points.
-    private func crop(_ shot: Shot, to region: Frame, notes: inout [String]) throws -> (
-        Data, CGSize
-    ) {
+    /// Crop to a region given in global screen points. `options` carries the
+    /// region as the caller typed it, so a miss is reported in their units.
+    private func crop(_ shot: Shot, to region: Frame, as options: CaptureOptions, notes: inout [String])
+        throws -> (Data, CaptureCrop) {
         guard !region.isEmpty else {
             throw LoupeError.failed("capture region has zero width or height")
         }
@@ -115,24 +120,41 @@ extension MacDriver {
         guard !clipped.isNull, clipped.width >= 1, clipped.height >= 1,
             let cropped = image.cropping(to: clipped)
         else {
-            throw LoupeError.failed(
-                String(
-                    format:
-                        "region x=%.0f y=%.0f w=%.0f h=%.0f does not overlap the window, whose screen "
-                        + "frame is x=%.0f y=%.0f w=%.0f h=%.0f — region coordinates are global screen "
-                        + "points (the same space as UINode.frame), not window-relative ones",
-                    region.x, region.y, region.width, region.height,
-                    shot.windowFrame.origin.x, shot.windowFrame.origin.y,
-                    shot.windowFrame.width, shot.windowFrame.height))
+            throw missed(options.region ?? region, units: options.regionUnits, shot: shot, image: image)
         }
         if clipped != requested.integral {
             notes.append("region reached past the window edge and was clipped to it")
         }
-        return (
-            try ImageOps.encode(cropped),
-            CGSize(
-                width: Double(cropped.width) / shot.scale, height: Double(cropped.height) / shot.scale)
-        )
+        let applied = CaptureCrop(
+            points: Frame(
+                x: shot.windowFrame.origin.x + clipped.minX / shot.scale,
+                y: shot.windowFrame.origin.y + clipped.minY / shot.scale,
+                width: clipped.width / shot.scale, height: clipped.height / shot.scale),
+            pixels: Frame(
+                x: clipped.minX, y: clipped.minY, width: clipped.width, height: clipped.height))
+        notes.append(applied.note)
+        return (try ImageOps.encode(cropped), applied)
+    }
+
+    /// Why a region missed the window, in the units the caller gave it.
+    private func missed(_ region: Frame, units: RegionUnits, shot: Shot, image: CGImage) -> LoupeError {
+        if units == .pixels {
+            return LoupeError.failed(
+                String(
+                    format: "pixel region x=%.0f y=%.0f w=%.0f h=%.0f does not overlap the %d×%d px "
+                        + "capture — pixel regions are measured from the uncropped image's top-left",
+                    region.x, region.y, region.width, region.height, image.width, image.height))
+        }
+        return LoupeError.failed(
+            String(
+                format:
+                    "region x=%.0f y=%.0f w=%.0f h=%.0f does not overlap the window, whose screen "
+                    + "frame is x=%.0f y=%.0f w=%.0f h=%.0f — region coordinates are global screen "
+                    + "points (the same space as UINode.frame), not window-relative ones; pass "
+                    + "regionUnits pixels to crop by the full capture's pixels instead",
+                region.x, region.y, region.width, region.height,
+                shot.windowFrame.origin.x, shot.windowFrame.origin.y,
+                shot.windowFrame.width, shot.windowFrame.height))
     }
 
     /// Wait for the window to stop changing, so a before/after pair is not just

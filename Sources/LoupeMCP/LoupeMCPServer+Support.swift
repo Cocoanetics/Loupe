@@ -41,6 +41,16 @@ extension LoupeMCPServer {
             region: frame, fullPage: fullPage ?? false, settle: settle ?? true, settleTimeout: 3.0)
     }
 
+    /// Unlike a malformed region, a misspelled unit is refused: a pixel region
+    /// read as points crops the wrong place, which is worse than no crop.
+    static func regionUnits(_ text: String?) throws -> RegionUnits {
+        guard let text else { return .points }
+        guard let units = RegionUnits(rawValue: text.lowercased()) else {
+            throw LoupeError.failed("regionUnits must be `points` or `pixels`, not `\(text)`")
+        }
+        return units
+    }
+
     // MARK: - Encoding
 
     /// Structured results travel as text, with sorted keys so an agent comparing

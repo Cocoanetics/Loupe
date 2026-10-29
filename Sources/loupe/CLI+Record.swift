@@ -260,10 +260,10 @@ extension AppStorePreview.Family: ExpressibleByArgument {}
 struct RegionFlags: ParsableArguments {
     @Option(
         help: """
-            Keep only part of the screen, as x,y,w,h in points — the same space as \
-            `capture --region`: origin at the top-left, x right, y down, the units \
-            `describe` reports. Pixels are points × the device scale. Must lie inside \
-            the screen. For a mac: window the origin is the window's top-left and the \
+            Keep only part of the screen, as x,y,w,h in points: origin at the top-left, \
+            x right, y down. Pixels are points × the device scale. Must lie inside the \
+            screen. For a mac: window the origin is the window's top-left — unlike \
+            `capture --region`, which takes global screen points like `describe` — and the \
             region must lie inside the window; ScreenCaptureKit films only that area. For a \
             simulator it is cropped when the video is encoded, since simctl films it all.
             """)

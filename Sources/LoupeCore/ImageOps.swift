@@ -205,6 +205,22 @@ public enum ImageOps {
         return Array(out.prefix(12))
     }
 
+    // MARK: - Cropping
+
+    /// Keep `rect`, in pixels from the image's top-left, clipped to the image.
+    /// Returns the clipped rectangle with the pixels, so a caller can say what it kept.
+    public static func crop(_ png: Data, toPixels rect: CGRect) throws -> (png: Data, kept: CGRect) {
+        let image = try decode(png)
+        let kept = rect.integral.intersection(CGRect(x: 0, y: 0, width: image.width, height: image.height))
+        guard !kept.isNull, kept.width >= 1, kept.height >= 1, let cropped = image.cropping(to: kept) else {
+            throw LoupeError.failed(
+                String(
+                    format: "pixel region x=%.0f y=%.0f w=%.0f h=%.0f does not overlap the %d×%d px image",
+                    rect.minX, rect.minY, rect.width, rect.height, image.width, image.height))
+        }
+        return (try encode(cropped), kept)
+    }
+
     // MARK: - Scaling
 
     /// Downscale so the longest edge is at most `maxEdge` pixels. Used before
