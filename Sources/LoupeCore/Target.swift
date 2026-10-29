@@ -106,6 +106,13 @@ public struct Target: Codable, Hashable, Sendable, CustomStringConvertible {
             windowID: selector.id)
     }
 
+    /// Whether `raw` reads as a target rather than an element: a `web:`, `mac:`
+    /// or `sim:` scheme, a bare URL, or `@session`. Lets a verb take its target
+    /// positionally, as in `loupe press mac:Mail#0 Save`.
+    public static func isTarget(_ raw: String) -> Bool {
+        (try? parse(raw)) != nil
+    }
+
     /// The `#…` / `@id` suffix of a `mac:` locator.
     private struct WindowSelector {
         var index: Int?
