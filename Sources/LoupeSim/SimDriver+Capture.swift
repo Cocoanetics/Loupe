@@ -35,16 +35,19 @@ extension SimDriver {
             width: Double(image.width) / ready.scale,
             height: Double(image.height) / ready.scale)
 
-        if let region = options.region {
+        var applied: CaptureCrop?
+        if let region = options.regionInPoints(scale: ready.scale) {
             let cropped = try Self.crop(image, to: region, scale: ready.scale)
             png = cropped.png
             pointSize = cropped.pointSize
+            applied = cropped.crop
             if cropped.clamped {
                 notes.append(
                     String(
                         format: "requested region was clamped to the %.0f×%.0f pt screen",
                         Double(image.width) / ready.scale, Double(image.height) / ready.scale))
             }
+            notes.append(cropped.crop.note)
         }
 
         return Capture(
@@ -52,7 +55,8 @@ extension SimDriver {
             pointSize: pointSize,
             scale: ready.scale,
             target: targetDescription,
-            notes: notes)
+            notes: notes,
+            crop: applied)
     }
 
     /// One screenshot, via a temp file.
@@ -111,6 +115,8 @@ extension SimDriver {
         /// True when the requested region reached past the screen and was pulled
         /// back to it, which the caller turns into a capture note.
         let clamped: Bool
+        /// What was kept, after clamping.
+        let crop: CaptureCrop
     }
 
     /// Crops a decoded screenshot to a region given in *points*.
@@ -143,7 +149,12 @@ extension SimDriver {
         return CroppedScreenshot(
             png: try ImageOps.encode(cropped),
             pointSize: CGSize(width: rect.width / scale, height: rect.height / scale),
-            clamped: rect != requested)
+            clamped: rect != requested,
+            crop: CaptureCrop(
+                points: Frame(
+                    x: rect.minX / scale, y: rect.minY / scale,
+                    width: rect.width / scale, height: rect.height / scale),
+                pixels: Frame(x: rect.minX, y: rect.minY, width: rect.width, height: rect.height)))
     }
 
     // MARK: - Describe

@@ -35,12 +35,27 @@ extension WebDriver {
         notes += scaleNotes(achieved: achieved, state: attempt.state)
         notes += dialogHandler?.drainDialogs() ?? []
 
+        // Both capture areas start at 0,0, so the uncropped image's pixels are
+        // the kept rectangle's points times the scale.
+        var applied: CaptureCrop?
+        if options.region != nil {
+            let rect = attempt.pointRect
+            let kept = CaptureCrop(
+                points: Frame(x: rect.minX, y: rect.minY, width: rect.width, height: rect.height),
+                pixels: Frame(
+                    x: rect.minX * achieved, y: rect.minY * achieved,
+                    width: rect.width * achieved, height: rect.height * achieved))
+            notes.append(kept.note)
+            applied = kept
+        }
+
         return Capture(
             png: attempt.snapshot.png,
             pointSize: attempt.pointRect.size,
             scale: achieved,
             target: targetDescription + (options.fullPage ? " (full page)" : ""),
-            notes: notes)
+            notes: notes,
+            crop: applied)
     }
 
     /// One snapshot and the context needed to report it honestly: the CSS-pixel
@@ -60,7 +75,7 @@ extension WebDriver {
     ) async throws -> CaptureAttempt {
         guard options.fullPage else {
             let area = try clipRegion(
-                options.region, to: CGRect(origin: .zero, size: webView.bounds.size))
+                options.regionInPoints(scale: scale), to: CGRect(origin: .zero, size: webView.bounds.size))
             return CaptureAttempt(
                 snapshot: try await snapshotImage(webView, window, of: area.rect),
                 pointRect: area.rect, state: state, notes: area.notes)
@@ -70,7 +85,7 @@ extension WebDriver {
         do {
             let page = try await growToDocumentHeight(
                 webView: webView, window: window, state: state, options: options)
-            let area = try clipRegion(options.region, to: page.rect)
+            let area = try clipRegion(options.regionInPoints(scale: scale), to: page.rect)
             let snapshot = try await snapshotImage(webView, window, of: area.rect)
             await restoreLayout(height: restoreHeight, scroll: restoreScroll)
             return CaptureAttempt(
