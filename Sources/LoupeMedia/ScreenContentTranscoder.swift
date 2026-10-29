@@ -37,7 +37,8 @@ public struct ScreenCrop: Sendable {
 /// - Variable frame rate: a sample is written only when the frame changed, using
 ///   the same detector as the GIF path, and the last one is held to the end.
 /// - Native resolution, optionally cropped to a region; UI text does not survive downscaling.
-///   A `--max-size` box (``MaxSize``) is the one deliberate exception. Otherwise only a picture past what H.264 can take (4096 on the long edge, 4096×2304 in
+///   A `--max-size` box (``MaxSize``) is the one deliberate exception. Otherwise only
+///   a picture past what H.264 can take (4096 on the long edge, 4096×2304 in
 ///   area, level 5.2) is scaled down to fit, and the result says so: a 5K desktop
 ///   would otherwise have no encoder at all.
 /// - High quality (0.85) rather than a bitrate, so text edges stay clean. Where the
@@ -185,16 +186,7 @@ public enum ScreenContentTranscoder {
         reader.add(output)
 
         var notes: [String] = []
-        let (boxedWidth, boxedHeight) = boxed(rect.size, into: maxSize, transform: transform)
-        if (boxedWidth, boxedHeight) != (Int(rect.width), Int(rect.height)), let maxSize {
-            notes.append(
-                "h264: scaled \(Int(rect.width))×\(Int(rect.height)) → \(boxedWidth)×\(boxedHeight) "
-                    + "(--max-size \(maxSize))")
-        }
-        let (width, height) = encodedSize(width: boxedWidth, height: boxedHeight)
-        if (width, height) != (boxedWidth, boxedHeight) {
-            notes.append("h264: scaled \(boxedWidth)×\(boxedHeight) → \(width)×\(height) (H.264 limit)")
-        }
+        let (width, height) = plannedSize(rect.size, maxSize: maxSize, transform: transform, notes: &notes)
 
         try? FileManager.default.removeItem(at: destination)
         let writer = try AVAssetWriter(outputURL: destination, fileType: .mp4)
@@ -243,6 +235,24 @@ public enum ScreenContentTranscoder {
         linear.tx = -after.minX + (transform.tx + before.minX) * after.width / before.width
         linear.ty = -after.minY + (transform.ty + before.minY) * after.height / before.height
         return linear
+    }
+
+    /// The encoded size: `size` fitted into `maxSize`, then into H.264's limit,
+    /// with a note for each step that scaled it.
+    private static func plannedSize(
+        _ size: CGSize, maxSize: MaxSize?, transform: CGAffineTransform, notes: inout [String]
+    ) -> (width: Int, height: Int) {
+        let (boxedWidth, boxedHeight) = boxed(size, into: maxSize, transform: transform)
+        if (boxedWidth, boxedHeight) != (Int(size.width), Int(size.height)), let maxSize {
+            notes.append(
+                "h264: scaled \(Int(size.width))×\(Int(size.height)) → \(boxedWidth)×\(boxedHeight) "
+                    + "(--max-size \(maxSize))")
+        }
+        let (width, height) = encodedSize(width: boxedWidth, height: boxedHeight)
+        if (width, height) != (boxedWidth, boxedHeight) {
+            notes.append("h264: scaled \(boxedWidth)×\(boxedHeight) → \(width)×\(height) (H.264 limit)")
+        }
+        return (width, height)
     }
 
     /// `size`, in the track's own pixels, fitted into `maxSize` as the picture is

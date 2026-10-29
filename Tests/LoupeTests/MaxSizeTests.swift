@@ -6,10 +6,14 @@ import Testing
     @Test func everyFormParses() throws {
         #expect(try MaxSize.parse("1280x720") == MaxSize(width: 1280, height: 720))
         #expect(try MaxSize.parse("800") == MaxSize(width: 800, height: 800, description: "800"))
-        #expect(try MaxSize.parse("720p") == MaxSize(width: 1280, height: 720, followsOrientation: true, description: "720p"))
+        #expect(
+            try MaxSize.parse("720p")
+                == MaxSize(width: 1280, height: 720, followsOrientation: true, description: "720p"))
         #expect(try MaxSize.parse("1080p").width == 1920)
         #expect(try MaxSize.parse("1440p").height == 1440)
-        #expect(try MaxSize.parse("4K") == MaxSize(width: 3840, height: 2160, followsOrientation: true, description: "4k"))
+        #expect(
+            try MaxSize.parse("4K")
+                == MaxSize(width: 3840, height: 2160, followsOrientation: true, description: "4k"))
         #expect(try !MaxSize.parse("1280x720").followsOrientation)
     }
 

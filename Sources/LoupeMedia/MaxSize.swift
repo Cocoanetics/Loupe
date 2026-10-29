@@ -25,21 +25,24 @@ public struct MaxSize: Sendable, Equatable, CustomStringConvertible {
     /// The GIF's box when none is given.
     public static let gifDefault = MaxSize(width: 800, height: 800)
 
-    public static let presets: [(name: String, width: Int, height: Int)] = [
-        ("720p", 1280, 720), ("1080p", 1920, 1080), ("1440p", 2560, 1440), ("4k", 3840, 2160)
+    public static let presets: [MaxSize] = [
+        preset("720p", 1280, 720), preset("1080p", 1920, 1080), preset("1440p", 2560, 1440),
+        preset("4k", 3840, 2160)
     ]
+
+    private static func preset(_ name: String, _ width: Int, _ height: Int) -> MaxSize {
+        MaxSize(width: width, height: height, followsOrientation: true, description: name)
+    }
 
     public static func parse(_ text: String) throws -> MaxSize {
         let value = text.trimmingCharacters(in: .whitespaces).lowercased()
-        if let preset = presets.first(where: { $0.name == value }) {
-            return MaxSize(width: preset.width, height: preset.height, followsOrientation: true, description: preset.name)
-        }
+        if let preset = presets.first(where: { $0.description == value }) { return preset }
         let sides = value.split(separator: "x", omittingEmptySubsequences: false)
         let numbers = sides.compactMap { side in Int(side).flatMap { $0 > 0 ? $0 : nil } }
         guard !sides.isEmpty, sides.count <= 2, numbers.count == sides.count else {
             throw MediaError.unreadable(
                 "invalid --max-size '\(text)': give WxH (e.g. 1280x720), N for an NxN box (e.g. 800), "
-                    + "or one of " + presets.map(\.name).joined(separator: ", "))
+                    + "or one of " + presets.map(\.description).joined(separator: ", "))
         }
         if numbers.count == 1 {
             return MaxSize(width: numbers[0], height: numbers[0], description: "\(numbers[0])")
