@@ -110,11 +110,41 @@ extension MacDriver {
         return matches
     }
 
+    /// How pressing a window's close button went: it raised a question, or it
+    /// ended there (closed, or left open for a reason already given).
+    private enum CloseAttempt {
+        case asked(AXUIElement)
+        case finished(CloseOutcome)
+    }
+
     private func close(_ window: AXUIElement, in application: AXUIElement, answer: String?) async
         -> CloseOutcome {
         let name = name(of: window)
-        func leftOpen(_ detail: String) -> CloseOutcome {
-            CloseOutcome(status: .leftOpen, window: name, detail: detail)
+        let prompt: AXUIElement
+        // A sheet left by an earlier close without --answer usually disables the
+        // close button, so answer it as it is rather than pressing close again.
+        if let pending = Self.sheet(on: window) {
+            prompt = pending
+        } else {
+            switch await pressClose(window, in: application, named: name) {
+                case .asked(let raised): prompt = raised
+                case .finished(let outcome): return outcome
+            }
+        }
+        guard let answer else {
+            let labels = Self.buttons(in: prompt).map { "'\($0.label)'" }.joined(separator: ", ")
+            return CloseOutcome(
+                status: .leftOpen, window: name,
+                detail: "it asks first (\(labels)) — pass --answer with one of those")
+        }
+        return await respond(to: prompt, of: window, in: application, with: answer, named: name)
+    }
+
+    /// Press the close button and wait for the window to go or to ask a question.
+    private func pressClose(_ window: AXUIElement, in application: AXUIElement, named name: String) async
+        -> CloseAttempt {
+        func leftOpen(_ detail: String) -> CloseAttempt {
+            .finished(CloseOutcome(status: .leftOpen, window: name, detail: detail))
         }
         guard let button = Self.windowButton(window, subrole: kAXCloseButtonSubrole) else {
             return leftOpen("it has no close button")
@@ -127,23 +157,16 @@ extension MacDriver {
         guard status == .success else {
             return leftOpen("pressing close failed: \(AXAPI.describe(status))")
         }
-
-        var prompt: AXUIElement?
         for _ in 0..<20 {
             if Self.isGone(window, from: application) {
-                return CloseOutcome(status: .closed, window: name)
+                return .finished(CloseOutcome(status: .closed, window: name))
             }
-            prompt = Self.prompt(for: window, in: application, existing: before)
-            if prompt != nil { break }
+            if let prompt = Self.prompt(for: window, in: application, existing: before) {
+                return .asked(prompt)
+            }
             try? await Task.sleep(nanoseconds: 100_000_000)
         }
-        guard let prompt else { return leftOpen("close was pressed but the window is still open") }
-
-        guard let answer else {
-            let labels = Self.buttons(in: prompt).map { "'\($0.label)'" }.joined(separator: ", ")
-            return leftOpen("it asks first (\(labels)) — pass --answer with one of those")
-        }
-        return await respond(to: prompt, of: window, in: application, with: answer, named: name)
+        return leftOpen("close was pressed but the window is still open")
     }
 
     /// Press `answer` in the sheet or alert closing `window` raised, and wait for
@@ -195,15 +218,18 @@ extension MacDriver {
     /// dialog window the app did not have before the close.
     private static func prompt(for window: AXUIElement, in application: AXUIElement, existing: Set<AXKey>)
         -> AXUIElement? {
-        if let sheet = AXAPI.children(window).first(where: { AXAPI.string($0, kAXRoleAttribute) == kAXSheetRole }) {
-            return sheet
-        }
+        if let sheet = sheet(on: window) { return sheet }
         let dialogs: Set<String> = [kAXDialogSubrole, kAXSystemDialogSubrole]
         return AXAPI.windows(application).first { candidate in
             !existing.contains(AXKey(candidate))
                 && (AXAPI.string(candidate, kAXRoleAttribute) == kAXSheetRole
                     || dialogs.contains(AXAPI.string(candidate, kAXSubroleAttribute) ?? ""))
         }
+    }
+
+    /// A sheet attached to the window, if one is showing.
+    private static func sheet(on window: AXUIElement) -> AXUIElement? {
+        AXAPI.children(window).first { AXAPI.string($0, kAXRoleAttribute) == kAXSheetRole }
     }
 
     /// The labelled buttons in a sheet or alert, in tree order.
