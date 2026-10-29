@@ -202,7 +202,8 @@ extension VerbCommand {
 
 extension List {
     func runOnHost(_ client: LoupeHostClient) async throws {
-        print(try await client.call("loupe_list_targets").text)
+        let text = try await client.call("loupe_list_targets").text
+        try render(try JSONDecoder().decode(Inventory.self, from: Data(text.utf8)))
     }
 }
 
