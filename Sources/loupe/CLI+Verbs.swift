@@ -49,6 +49,22 @@ extension VerbCommand {
             print(try Out.write(shot.png, to: out, fallback: out).path)
         }
     }
+
+    /// `loupe press mac:Mail#0 Save`, shaped like `loupe describe mac:Mail#0`:
+    /// given one argument more than it needs, a verb takes the first as its
+    /// target — but only when it reads as one, so a stray word is never
+    /// mistaken for a target.
+    static func leadingTarget(_ first: String, alongside targetName: String?) throws -> String {
+        guard targetName == nil else {
+            throw ValidationError("Give the target positionally or with --target, not both.")
+        }
+        guard Target.isTarget(first) else {
+            throw ValidationError(
+                "'\(first)' is not a target (mac:, sim:, web:, http(s):// or @session), "
+                    + "so there is one argument too many.")
+        }
+        return first
+    }
 }
 
 // MARK: - Verbs
@@ -58,12 +74,19 @@ struct PressCommand: VerbCommand {
         commandName: "press",
         abstract: "Activate an element by handle, identifier or label.")
 
-    @Argument(help: "Element to activate.") var element: String
+    @Argument(help: "Element to activate, optionally after the target.") var element: String
+    @Argument(help: .hidden) var then: String?
     @Option(name: .customLong("target"), help: "Target, if not the remembered one.")
     var targetName: String?
     @Option(name: .customLong("session"), help: "Live session to send this to, by name.")
     var sessionName: String?
     @Option(help: "Capture afterwards and write the PNG here.") var out: String?
+
+    mutating func validate() throws {
+        guard let then else { return }
+        targetName = try Self.leadingTarget(element, alongside: targetName)
+        (element, self.then) = (then, nil)
+    }
 
     func action() throws -> UIAction { .press(node: element) }
     func run() async throws { try await runVerb() }
@@ -80,13 +103,20 @@ struct SetCommand: VerbCommand {
             those instead.
             """)
 
-    @Argument(help: "Element to set.") var element: String
+    @Argument(help: "Element to set, optionally after the target.") var element: String
     @Argument(help: "Value, or {{ENV_VAR}}.") var value: String
+    @Argument(help: .hidden) var then: String?
     @Option(name: .customLong("target"), help: "Target, if not the remembered one.")
     var targetName: String?
     @Option(name: .customLong("session"), help: "Live session to send this to, by name.")
     var sessionName: String?
     @Option(help: "Capture afterwards and write the PNG here.") var out: String?
+
+    mutating func validate() throws {
+        guard let then else { return }
+        targetName = try Self.leadingTarget(element, alongside: targetName)
+        (element, value, self.then) = (value, then, nil)
+    }
 
     func action() throws -> UIAction {
         .setValue(node: element, value: try EnvironmentInterpolation.expand(value))
@@ -152,12 +182,19 @@ struct RevealCommand: VerbCommand {
             which also does the right thing inside nested scrollers.
             """)
 
-    @Argument(help: "Element to bring into view.") var element: String
+    @Argument(help: "Element to bring into view, optionally after the target.") var element: String
+    @Argument(help: .hidden) var then: String?
     @Option(name: .customLong("target"), help: "Target, if not the remembered one.")
     var targetName: String?
     @Option(name: .customLong("session"), help: "Live session to send this to, by name.")
     var sessionName: String?
     @Option(help: "Capture afterwards and write the PNG here.") var out: String?
+
+    mutating func validate() throws {
+        guard let then else { return }
+        targetName = try Self.leadingTarget(element, alongside: targetName)
+        (element, self.then) = (then, nil)
+    }
 
     func action() throws -> UIAction { .scrollTo(node: element) }
     func run() async throws { try await runVerb() }
@@ -177,8 +214,10 @@ struct WaitCommand: VerbCommand {
               loupe wait 'Health Dashboard|!Invalid password'
             """)
 
-    @Argument(help: "What to wait for. `A|B` for either, `!X` for a failure condition.")
+    @Argument(
+        help: "What to wait for, optionally after the target. `A|B` for either, `!X` for a failure condition.")
     var expected: String
+    @Argument(help: .hidden) var then: String?
     @Option(help: "Seconds to wait.") var timeout: Double = 10
     @Flag(help: "Wait for it to disappear instead.") var gone = false
     @Option(name: .customLong("target"), help: "Target, if not the remembered one.")
@@ -186,6 +225,12 @@ struct WaitCommand: VerbCommand {
     @Option(name: .customLong("session"), help: "Live session to send this to, by name.")
     var sessionName: String?
     @Option(help: "Capture afterwards and write the PNG here.") var out: String?
+
+    mutating func validate() throws {
+        guard let then else { return }
+        targetName = try Self.leadingTarget(expected, alongside: targetName)
+        (expected, self.then) = (then, nil)
+    }
 
     func action() throws -> UIAction {
         let (nodes, failures) = Self.split(expected)
