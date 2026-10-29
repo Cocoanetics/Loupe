@@ -355,8 +355,9 @@ final class WindowRecording: NSObject, RecordingHandle, SCStreamOutput, SCStream
                     + (failure.map { ": \($0)" } ?? " — it may have shown nothing, or the screen is locked"))
         }
         // Measured from the first frame, not from `startedAt`: the stream takes a
-        // moment to start, and the caller's wait only begins once it has.
-        let duration = stoppedAt.timeIntervalSince(firstAt ?? startedAt)
+        // moment to start, and the caller's wait only begins once it has. A first
+        // frame that only landed while the stream was stopping counts as zero.
+        let duration = max(0, stoppedAt.timeIntervalSince(firstAt ?? startedAt))
         // Hold the last frame up to the moment of stopping; idle windows send nothing.
         let held = CMTimeAdd(opened ?? last, CMTime(seconds: duration, preferredTimescale: 600))
         if let adaptor, let lastPixels, let tail = RecordingTail.repeatTime(last: last, held: held) {
