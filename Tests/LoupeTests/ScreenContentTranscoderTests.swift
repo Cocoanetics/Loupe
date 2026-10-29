@@ -1,0 +1,132 @@
+import AVFoundation
+import CoreGraphics
+import Foundation
+import LoupeCore
+@testable import LoupeMedia
+import Testing
+
+@Suite struct ScreenContentTranscoderTests {
+    @Test func picturesPastTheH264LimitAreScaledToFit() {
+        #expect(ScreenContentTranscoder.encodedSize(width: 5120, height: 2880) == (4096, 2304))
+        #expect(ScreenContentTranscoder.encodedSize(width: 2880, height: 5120) == (2304, 4096))
+        // 6K: the long edge alone would leave it too large in area.
+        let sixK = ScreenContentTranscoder.encodedSize(width: 6016, height: 3384)
+        #expect(sixK.width <= 4096 && sixK.width * sixK.height <= 4096 * 2304)
+    }
+
+    @Test func picturesThatFitKeepTheirNativeSize() {
+        #expect(ScreenContentTranscoder.encodedSize(width: 1940, height: 1244) == (1940, 1244))
+        #expect(ScreenContentTranscoder.encodedSize(width: 4096, height: 2304) == (4096, 2304))
+        #expect(ScreenContentTranscoder.encodedSize(width: 1667, height: 2421) == (1667, 2421))
+    }
+
+    @Test func scaledSidesAreEven() {
+        for (width, height) in [(4097, 1000), (5121, 2881), (4999, 4999), (8191, 3)] {
+            let size = ScreenContentTranscoder.encodedSize(width: width, height: height)
+            #expect(size.width % 2 == 0 && size.height % 2 == 0)
+            #expect(size.width <= 4096 && size.height <= 4096)
+        }
+    }
+
+    @Test func settingsAreCheckedBeforeTheInputIsMade() throws {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("settings-\(UUID()).mp4")
+        let writer = try AVAssetWriter(outputURL: url, fileType: .mp4)
+        var notes: [String] = []
+        // At 5K the quality setting is what raised; the answer must be settings
+        // the input takes, or a Swift error.
+        do {
+            let settings = try ScreenContentTranscoder.applicableSettings(
+                width: 5120, height: 2880, writer: writer, notes: &notes)
+            _ = AVAssetWriterInput(mediaType: .video, outputSettings: settings)
+        } catch {
+            #expect(error is MediaError)
+        }
+    }
+
+    @Test func aFiveKSourceIsScaledAndEncoded() async throws {
+        let source = try await Self.fiveKMovie()
+        defer { try? FileManager.default.removeItem(at: source) }
+        let out = FileManager.default.temporaryDirectory.appendingPathComponent("5k-\(UUID()).mp4")
+        defer { try? FileManager.default.removeItem(at: out) }
+
+        let done = try await ScreenContentTranscoder.transcode(from: source, to: out)
+        #expect(done.width == 4096 && done.height == 2304)
+        #expect(done.writtenFrames >= 2)
+        #expect(done.notes.contains { $0.contains("5120×2880 → 4096×2304") })
+        let track = try #require(try await AVURLAsset(url: out).loadTracks(withMediaType: .video).first)
+        let size = try await track.load(.naturalSize)
+        #expect(Int(size.width) == 4096 && Int(size.height) == 2304)
+    }
+
+    @Test func aCropIsScaledOnlyWhenItIsStillTooLarge() async throws {
+        let source = try await Self.fiveKMovie()
+        defer { try? FileManager.default.removeItem(at: source) }
+        let out = FileManager.default.temporaryDirectory.appendingPathComponent("crop-\(UUID()).mp4")
+        defer { try? FileManager.default.removeItem(at: out) }
+
+        // Points at 2×: 2400 points wide is 4800 pixels, still past the limit.
+        let wide = ScreenCrop(region: Frame(x: 0, y: 0, width: 2400, height: 1200), scale: 2)
+        let large = try await ScreenContentTranscoder.transcode(from: source, to: out, crop: wide)
+        #expect(large.width <= 4096 && large.width < 4800)
+        #expect(!large.notes.isEmpty)
+
+        let small = ScreenCrop(region: Frame(x: 100, y: 100, width: 800, height: 600), scale: 2)
+        let native = try await ScreenContentTranscoder.transcode(from: source, to: out, crop: small)
+        #expect(native.width == 1600 && native.height == 1200)
+        #expect(native.notes.isEmpty)
+    }
+
+    @Test func thePipelineNamesTheScalingAndConsumesTheRawFile() async throws {
+        let raw = try await Self.fiveKMovie()
+        defer { try? FileManager.default.removeItem(at: raw) }
+        let out = FileManager.default.temporaryDirectory.appendingPathComponent("pipe-\(UUID()).mp4")
+        defer { try? FileManager.default.removeItem(at: out) }
+
+        let product = try await RecordingPipeline.encode(
+            RecordingResult(url: raw, duration: 0.5, bytes: 0), as: RecordingRequest(output: out))
+        #expect(product.notes.contains { $0.contains("(H.264 limit)") })
+        #expect(!product.notes.contains { $0.contains("kept the original") })
+        #expect(!FileManager.default.fileExists(atPath: raw.path))
+    }
+
+    /// Two different solid frames at 5120×2880, written the way the Mac recorder
+    /// writes its raw file: plain H.264 with no compression properties.
+    private static func fiveKMovie() async throws -> URL {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("raw-5k-\(UUID()).mov")
+        let width = 5120
+        let height = 2880
+        let writer = try AVAssetWriter(outputURL: url, fileType: .mov)
+        let input = AVAssetWriterInput(
+            mediaType: .video,
+            outputSettings: [AVVideoCodecKey: AVVideoCodecType.h264, AVVideoWidthKey: width, AVVideoHeightKey: height])
+        input.expectsMediaDataInRealTime = false
+        let adaptor = AVAssetWriterInputPixelBufferAdaptor(
+            assetWriterInput: input,
+            sourcePixelBufferAttributes: [
+                kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA,
+                kCVPixelBufferWidthKey as String: width,
+                kCVPixelBufferHeightKey as String: height
+            ])
+        writer.add(input)
+        #expect(writer.startWriting())
+        writer.startSession(atSourceTime: .zero)
+        for (index, gray) in [UInt8(30), 220].enumerated() {
+            while !input.isReadyForMoreMediaData { try await Task.sleep(for: .milliseconds(5)) }
+            let pool = try #require(adaptor.pixelBufferPool)
+            var made: CVPixelBuffer?
+            CVPixelBufferPoolCreatePixelBuffer(nil, pool, &made)
+            let buffer = try #require(made)
+            CVPixelBufferLockBaseAddress(buffer, [])
+            memset(
+                CVPixelBufferGetBaseAddress(buffer), Int32(gray),
+                CVPixelBufferGetBytesPerRow(buffer) * height)
+            CVPixelBufferUnlockBaseAddress(buffer, [])
+            #expect(adaptor.append(buffer, withPresentationTime: CMTime(value: Int64(index), timescale: 4)))
+        }
+        input.markAsFinished()
+        writer.endSession(atSourceTime: CMTime(value: 2, timescale: 4))
+        await writer.finishWriting()
+        try #require(writer.status == .completed, "\(String(describing: writer.error))")
+        return url
+    }
+}
