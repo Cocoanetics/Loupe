@@ -20,6 +20,7 @@ public enum Surface: String, Codable, Sendable, CaseIterable {
 /// https://example.com            (bare URLs imply web:)
 /// mac:Safari                     frontmost window of an app, by name or bundle id
 /// mac:Safari#2                   that app's window at index 2
+/// mac:Safari@48211               that app's window by stable window id (also `#id=48211`)
 /// mac:pid:4711                   by process id
 /// sim:booted                     the booted simulator
 /// sim:iPhone 17 Pro              by device name
@@ -38,20 +39,28 @@ public struct Target: Codable, Hashable, Sendable, CustomStringConvertible {
     /// shifts everything, and accessibility only lists windows on the current
     /// Space, so a window can leave the list entirely.
     public var windowTitle: String?
+    /// Stable window id for `mac:` targets (`@48211`, or `#id=48211`): the
+    /// CGWindowID, which — unlike an index — does not change when other windows
+    /// open, close or show a sheet, until the window itself closes.
+    public var windowID: Int?
 
     public init(
-        surface: Surface, locator: String, windowIndex: Int? = nil, windowTitle: String? = nil
+        surface: Surface, locator: String, windowIndex: Int? = nil, windowTitle: String? = nil,
+        windowID: Int? = nil
     ) {
         self.surface = surface
         self.locator = locator
         self.windowIndex = windowIndex
         self.windowTitle = windowTitle
+        self.windowID = windowID
     }
 
     public var description: String {
         if surface == .live { return "@\(locator)" }
         var text = "\(surface.rawValue):\(locator)"
-        if let windowIndex {
+        if let windowID {
+            text += "@\(windowID)"
+        } else if let windowIndex {
             text += "#\(windowIndex)"
         } else if let windowTitle {
             text += "#\(windowTitle)"
@@ -86,24 +95,45 @@ public struct Target: Codable, Hashable, Sendable, CustomStringConvertible {
         }
 
         var locator = String(trimmed[trimmed.index(after: colon)...])
-        var windowIndex: Int?
-        var windowTitle: String?
-
-        // `#…` window selector, only meaningful for mac targets. A number is an
-        // index; anything else is a title substring. Guard against eating a URL
-        // fragment.
-        if surface == .mac, let hash = locator.lastIndex(of: "#") {
-            let selector = String(locator[locator.index(after: hash)...])
-            if !selector.isEmpty {
-                if let idx = Int(selector) { windowIndex = idx } else { windowTitle = selector }
-                locator = String(locator[locator.startIndex..<hash])
-            }
-        }
+        var selector = WindowSelector()
+        if surface == .mac { selector = WindowSelector.extract(from: &locator) }
 
         locator = locator.trimmingCharacters(in: .whitespaces)
         guard !locator.isEmpty else {
             throw LoupeError.targetNotFound("\(trimmed) — missing locator after \(surface.rawValue):")
         }
-        return Target(surface: surface, locator: locator, windowIndex: windowIndex, windowTitle: windowTitle)
+        return Target(surface: surface, locator: locator, windowIndex: selector.index, windowTitle: selector.title,
+            windowID: selector.id)
+    }
+
+    /// The `#…` / `@id` suffix of a `mac:` locator.
+    private struct WindowSelector {
+        var index: Int?
+        var title: String?
+        var id: Int?
+
+        /// Strip the selector off `locator`. A `#` number is an index, `#id=N`
+        /// or `@N` a stable window id, anything else after `#` a title
+        /// substring. Guards against eating a URL fragment.
+        static func extract(from locator: inout String) -> WindowSelector {
+            var result = WindowSelector()
+            if let hash = locator.lastIndex(of: "#") {
+                let text = String(locator[locator.index(after: hash)...])
+                guard !text.isEmpty else { return result }
+                if text.hasPrefix("id="), let id = Int(text.dropFirst(3)) {
+                    result.id = id
+                } else if let index = Int(text) {
+                    result.index = index
+                } else {
+                    result.title = text
+                }
+                locator = String(locator[locator.startIndex..<hash])
+            } else if let at = locator.lastIndex(of: "@"),
+                let id = Int(locator[locator.index(after: at)...]) {
+                result.id = id
+                locator = String(locator[locator.startIndex..<at])
+            }
+            return result
+        }
     }
 }

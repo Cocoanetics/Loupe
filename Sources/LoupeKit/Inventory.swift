@@ -2,6 +2,7 @@ import AppKit
 import ApplicationServices
 import Foundation
 import LoupeCore
+import LoupeMac
 import LoupeSim
 
 /// What is available to point Loupe at right now.
@@ -17,6 +18,8 @@ public struct Inventory: Codable, Sendable {
         public var active: Bool
         /// Window titles, index-aligned with the `mac:Name#N` selector.
         public var windows: [String]
+        /// Stable window ids (CGWindowID), index-aligned with ``windows``; 0 when unknown.
+        public var windowIDs: [Int] = []
     }
 
     public struct Simulator: Codable, Sendable {
@@ -44,7 +47,8 @@ public struct Inventory: Codable, Sendable {
                 bundleID: app.bundleIdentifier,
                 pid: app.processIdentifier,
                 active: app.isActive,
-                windows: trusted ? windowTitles(pid: app.processIdentifier) : [])
+                windows: trusted ? windowTitles(pid: app.processIdentifier) : [],
+                windowIDs: trusted ? windowIDs(pid: app.processIdentifier) : [])
         }
         .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
 
@@ -58,6 +62,18 @@ public struct Inventory: Codable, Sendable {
                 ($0.state == "Booted" ? 0 : 1, $0.name) < ($1.state == "Booted" ? 0 : 1, $1.name)
             }
         return Inventory(apps: apps, simulators: simulators, accessibilityTrusted: trusted)
+    }
+
+    /// Stable window ids, in the same order as ``windowTitles(pid:)``.
+    private static func windowIDs(pid: pid_t) -> [Int] {
+        let app = AXUIElementCreateApplication(pid)
+        var value: CFTypeRef?
+        guard
+            AXUIElementCopyAttributeValue(app, kAXWindowsAttribute as CFString, &value)
+                == .success,
+            let windows = value as? [AXUIElement]
+        else { return [] }
+        return windows.map { MacDriver.stableWindowID(of: $0) ?? 0 }
     }
 
     /// Window titles via the accessibility API. Reading is enough — no activation,

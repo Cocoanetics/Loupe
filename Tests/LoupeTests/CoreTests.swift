@@ -7,6 +7,19 @@ import Testing
 @Suite("Target parsing")
 struct TargetTests {
 
+    @Test("mac window ids parse from @ and #id= and round-trip")
+    func windowID() throws {
+        for raw in ["mac:Mail@48211", "mac:Mail#id=48211"] {
+            let target = try Target.parse(raw)
+            #expect(target.locator == "Mail")
+            #expect(target.windowID == 48211)
+            #expect(target.windowIndex == nil)
+            #expect(target.windowTitle == nil)
+            #expect(target.description == "mac:Mail@48211")
+        }
+        #expect(try Target.parse("mac:Mail#1").windowIndex == 1)
+    }
+
     @Test("bare URLs imply the web surface")
     func bareURL() throws {
         let target = try Target.parse("https://example.com/a?b=c")
