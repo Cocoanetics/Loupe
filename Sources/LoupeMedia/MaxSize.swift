@@ -50,9 +50,10 @@ public struct MaxSize: Sendable, Equatable, CustomStringConvertible {
         return MaxSize(width: numbers[0], height: numbers[1])
     }
 
-    /// `size` scaled down, keeping its shape, to fit the box; both sides even.
-    /// Never scaled up: a picture that already fits comes back unchanged.
-    public func fit(_ size: CGSize) -> CGSize {
+    /// `size` scaled down, keeping its shape, to fit the box. Scaled sides are
+    /// rounded down to even when `evenDimensions` is set, as H.264 needs; a GIF
+    /// has no such rule. Never scaled up: a picture that already fits comes back unchanged.
+    public func fit(_ size: CGSize, evenDimensions: Bool = true) -> CGSize {
         guard size.width > 0, size.height > 0 else { return size }
         let portrait = followsOrientation && size.height > size.width
         let boxWidth = Double(portrait ? height : width)
@@ -60,7 +61,10 @@ public struct MaxSize: Sendable, Equatable, CustomStringConvertible {
         let factor = min(boxWidth / size.width, boxHeight / size.height)
         guard factor < 1 else { return size }
         // The epsilon keeps an exact fit, such as 2560 × 0.5, from flooring to one less.
-        func side(_ length: Double) -> Int { max(2, Int(length * factor + 1e-6) & ~1) }
+        func side(_ length: Double) -> Int {
+            let scaled = Int(length * factor + 1e-6)
+            return evenDimensions ? max(2, scaled & ~1) : max(1, scaled)
+        }
         return CGSize(width: side(size.width), height: side(size.height))
     }
 }

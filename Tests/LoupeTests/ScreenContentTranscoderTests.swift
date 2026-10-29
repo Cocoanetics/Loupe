@@ -149,8 +149,10 @@ import Testing
             CGImageSourceCreateWithData(result.data as CFData, nil).flatMap {
                 CGImageSourceCreateImageAtIndex($0, 0, nil)
             })
-        #expect(max(image.width, image.height) <= 800)
-        #expect(image.height > image.width)
+        // Exactly the fitted box: a GIF need not round to even, and no side comes out short.
+        let fitted = MaxSize.gifDefault.fit(CGSize(width: 1668, height: 2420), evenDimensions: false)
+        #expect(CGSize(width: image.width, height: image.height) == fitted)
+        #expect(image.width == 551 && image.height == 800)
         // The note names the frames as written, not the box they were fitted to.
         #expect(result.notes.contains("gif: scaled 1668×2420 → \(image.width)×\(image.height) (--max-size 800x800)"))
     }

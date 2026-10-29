@@ -62,4 +62,13 @@ import Testing
             #expect(fitted.width <= size.width && fitted.height <= size.height)
         }
     }
+
+    @Test func withoutEvenRoundingASideKeepsItsOddPixel() throws {
+        let box = try MaxSize.parse("800")
+        #expect(box.fit(CGSize(width: 1668, height: 2420), evenDimensions: false) == CGSize(width: 551, height: 800))
+        #expect(box.fit(CGSize(width: 2420, height: 1668), evenDimensions: false) == CGSize(width: 800, height: 551))
+        #expect(try MaxSize.parse("10").fit(CGSize(width: 4000, height: 3), evenDimensions: false).height == 1)
+        // A picture that fits is still left alone.
+        #expect(box.fit(CGSize(width: 799, height: 601), evenDimensions: false) == CGSize(width: 799, height: 601))
+    }
 }

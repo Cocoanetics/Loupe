@@ -71,8 +71,9 @@ public enum VideoConverter {
 
         let generator = AVAssetImageGenerator(asset: asset)
         generator.appliesPreferredTrackTransform = true
-        // As the picture is shown, so a preset box turns with a portrait one.
-        let fitted = options.maxSize.fit(shown)
+        // As the picture is shown, so a preset box turns with a portrait one. A GIF
+        // has no even-side rule, so a side is not rounded off to suit H.264.
+        let fitted = options.maxSize.fit(shown, evenDimensions: false)
         generator.maximumSize = fitted
         // Half a sample of slack: exact seeks cost a decode from the previous
         // keyframe each, and a screen recording is mostly keyframes' worth of sameness.
@@ -80,13 +81,15 @@ public enum VideoConverter {
         generator.requestedTimeToleranceBefore = slack
         generator.requestedTimeToleranceAfter = slack
 
-        // What the generator really made: it keeps the shape exactly, so a side
-        // can come out a few pixels short of the fitted box.
+        // The frames as written, to name in the note.
         var made: (width: Int, height: Int)?
         var result = try await encode(sampleCount: count, duration: duration, options: options) { index in
             let time = CMTime(seconds: Double(index) * step, preferredTimescale: 600)
             // A frame that fails to decode is skipped; the previous one is held.
-            guard let image = try? await generator.image(at: time).image else { return nil }
+            guard let generated = try? await generator.image(at: time).image else { return nil }
+            // The generator keeps the shape exactly, so a side can come out a pixel
+            // or so short of the fitted box; such a frame is drawn to the box.
+            let image = resized(generated, to: fitted) ?? generated
             if made == nil { made = (image.width, image.height) }
             return TimedFrame(image: image, time: time.seconds)
         }
@@ -96,6 +99,24 @@ public enum VideoConverter {
                     + "(--max-size \(options.maxSize))")
         }
         return result
+    }
+
+    /// `image` drawn at `size`, or nil when it already is that size or cannot be drawn.
+    static func resized(_ image: CGImage, to size: CGSize) -> CGImage? {
+        let width = Int(size.width)
+        let height = Int(size.height)
+        guard width > 0, height > 0, image.width != width || image.height != height else { return nil }
+        let space =
+            image.colorSpace.flatMap { $0.model == .rgb ? $0 : nil }
+            ?? CGColorSpace(name: CGColorSpace.sRGB) ?? CGColorSpaceCreateDeviceRGB()
+        guard
+            let context = CGContext(
+                data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: 0, space: space,
+                bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)
+        else { return nil }
+        context.interpolationQuality = .high
+        context.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
+        return context.makeImage()
     }
 
     /// Pulls `sampleCount` frames one by one from `frame` and collapses them as
