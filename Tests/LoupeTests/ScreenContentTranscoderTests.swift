@@ -108,6 +108,25 @@ import Testing
         #expect(Int(size.width) == 1920 && Int(size.height) == 1080)
     }
 
+    @Test func aMaxSizeVideoNeverFallsBackToTheUncappedOriginal() async throws {
+        // Not a movie, so the transcode fails; the plain fallback would copy it as is.
+        let raw = FileManager.default.temporaryDirectory.appendingPathComponent("raw-bad-\(UUID()).mov")
+        try Data("not a movie".utf8).write(to: raw)
+        defer { try? FileManager.default.removeItem(at: raw) }
+        let out = FileManager.default.temporaryDirectory.appendingPathComponent("capped-\(UUID()).mp4")
+        defer { try? FileManager.default.removeItem(at: out) }
+
+        let request = RecordingRequest(output: out, maxSize: try MaxSize.parse("720p"))
+        await #expect {
+            _ = try await RecordingPipeline.encode(RecordingResult(url: raw, duration: 1, bytes: 11), as: request)
+        } throws: { error in
+            error.localizedDescription.contains("--max-size 720p")
+                && error.localizedDescription.contains("raw recording was kept")
+        }
+        #expect(FileManager.default.fileExists(atPath: raw.path))
+        #expect(!FileManager.default.fileExists(atPath: out.path))
+    }
+
     @Test func aPresetTurnsWithATrackRotatedToPortrait() {
         let quarter = CGAffineTransform(a: 0, b: 1, c: -1, d: 0, tx: 2880, ty: 0)
         let preset = MaxSize(width: 1920, height: 1080, followsOrientation: true)
