@@ -37,7 +37,8 @@ public struct ScreenCrop: Sendable {
 /// - Variable frame rate: a sample is written only when the frame changed, using
 ///   the same detector as the GIF path, and the last one is held to the end.
 /// - Native resolution, optionally cropped to a region; UI text does not survive downscaling.
-///   Only a picture past what H.264 can take (4096 on the long edge, 4096×2304 in
+///   A `--max-size` box (``MaxSize``) is the one deliberate exception. Otherwise only
+///   a picture past what H.264 can take (4096 on the long edge, 4096×2304 in
 ///   area, level 5.2) is scaled down to fit, and the result says so: a 5K desktop
 ///   would otherwise have no encoder at all.
 /// - High quality (0.85) rather than a bitrate, so text edges stay clean. Where the
@@ -75,9 +76,9 @@ public enum ScreenContentTranscoder {
 
     public static func transcode(
         from source: URL, to destination: URL, crop: ScreenCrop? = nil,
-        threshold: Double = defaultThreshold
+        maxSize: MaxSize? = nil, threshold: Double = defaultThreshold
     ) async throws -> TranscodeResult {
-        let pipeline = try await makePipeline(from: source, to: destination, crop: crop)
+        let pipeline = try await makePipeline(from: source, to: destination, crop: crop, maxSize: maxSize)
         // Decoding, cropping and scaling block; on a thread of their own, a slow
         // or stuck frame holds up this transcode, not Swift's cooperative pool.
         let carried = Unchecked(pipeline)
@@ -157,7 +158,7 @@ public enum ScreenContentTranscoder {
         await pipeline.writer.finishWriting()
     }
 
-    private static func makePipeline(from source: URL, to destination: URL, crop: ScreenCrop?)
+    private static func makePipeline(from source: URL, to destination: URL, crop: ScreenCrop?, maxSize: MaxSize?)
         async throws -> Pipeline {
         let asset = AVURLAsset(url: source)
         guard let track = try await asset.loadTracks(withMediaType: .video).first else {
@@ -184,9 +185,8 @@ public enum ScreenContentTranscoder {
         guard reader.canAdd(output) else { throw MediaError.unreadable("cannot read the video track") }
         reader.add(output)
 
-        let (width, height) = encodedSize(width: Int(rect.width), height: Int(rect.height))
-        var notes = (width, height) == (Int(rect.width), Int(rect.height))
-            ? [] : ["h264: scaled \(Int(rect.width))×\(Int(rect.height)) → \(width)×\(height) (H.264 limit)"]
+        var notes: [String] = []
+        let (width, height) = plannedSize(rect.size, maxSize: maxSize, transform: transform, notes: &notes)
 
         try? FileManager.default.removeItem(at: destination)
         let writer = try AVAssetWriter(outputURL: destination, fileType: .mp4)
@@ -235,6 +235,36 @@ public enum ScreenContentTranscoder {
         linear.tx = -after.minX + (transform.tx + before.minX) * after.width / before.width
         linear.ty = -after.minY + (transform.ty + before.minY) * after.height / before.height
         return linear
+    }
+
+    /// The encoded size: `size` fitted into `maxSize`, then into H.264's limit,
+    /// with a note for each step that scaled it.
+    private static func plannedSize(
+        _ size: CGSize, maxSize: MaxSize?, transform: CGAffineTransform, notes: inout [String]
+    ) -> (width: Int, height: Int) {
+        let (boxedWidth, boxedHeight) = boxed(size, into: maxSize, transform: transform)
+        if (boxedWidth, boxedHeight) != (Int(size.width), Int(size.height)), let maxSize {
+            notes.append(
+                "h264: scaled \(Int(size.width))×\(Int(size.height)) → \(boxedWidth)×\(boxedHeight) "
+                    + "(--max-size \(maxSize))")
+        }
+        let (width, height) = encodedSize(width: boxedWidth, height: boxedHeight)
+        if (width, height) != (boxedWidth, boxedHeight) {
+            notes.append("h264: scaled \(boxedWidth)×\(boxedHeight) → \(width)×\(height) (H.264 limit)")
+        }
+        return (width, height)
+    }
+
+    /// `size`, in the track's own pixels, fitted into `maxSize` as the picture is
+    /// shown: a preset box turns with a track that `transform` rotates to portrait.
+    static func boxed(_ size: CGSize, into maxSize: MaxSize?, transform: CGAffineTransform)
+        -> (width: Int, height: Int) {
+        guard let maxSize else { return (Int(size.width), Int(size.height)) }
+        let quarterTurn = abs(transform.b) > abs(transform.a)
+        let shown = quarterTurn ? CGSize(width: size.height, height: size.width) : size
+        let fitted = maxSize.fit(shown)
+        return quarterTurn
+            ? (Int(fitted.height), Int(fitted.width)) : (Int(fitted.width), Int(fitted.height))
     }
 
     /// The quality-based settings, or an average bitrate where the encoder for

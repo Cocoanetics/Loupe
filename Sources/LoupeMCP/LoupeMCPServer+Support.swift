@@ -291,7 +291,7 @@ extension LoupeMCPServer {
         var element: String?
         var gif: Bool
         var fps: Double?
-        var maxWidth: Int?
+        var maxSize: String?
         var appStore: Bool
         var appStoreDevice: String?
         var tail: String?
@@ -351,13 +351,16 @@ extension LoupeMCPServer {
                 throw LoupeError.failed("appStore makes a video; give `out` an .mp4 name (and `gif` for a GIF too)")
             }
             let wantsGIF = gif || output.pathExtension.lowercased() == "gif"
-            return RecordingRequest(
+            let box = try maxSize.map(MaxSize.parse)
+            let request = RecordingRequest(
                 output: output,
                 gif: wantsGIF
                     ? GIFOptions(
-                        fps: fps ?? 10, maxWidth: maxWidth ?? 800, threshold: threshold ?? 0.002, loop: loop ?? true)
+                        fps: fps ?? 10, maxSize: box ?? .gifDefault, threshold: threshold ?? 0.002, loop: loop ?? true)
                     : nil,
-                appStore: appStore, family: try family())
+                appStore: appStore, family: try family(), maxSize: box)
+            try request.validate()
+            return request
         }
     }
 }

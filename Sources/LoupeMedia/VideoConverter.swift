@@ -5,15 +5,15 @@ import Foundation
 public struct GIFOptions: Sendable {
     /// Frames sampled per second of video. Collapsing then drops the still ones.
     public var fps: Double
-    /// Output width in pixels; frames are never scaled up.
-    public var maxWidth: Int
+    /// The box frames are fitted into; they are never scaled up.
+    public var maxSize: MaxSize
     /// See ``FrameCollapser/collapse(_:endTime:threshold:)``.
     public var threshold: Double
     public var loop: Bool
 
-    public init(fps: Double = 10, maxWidth: Int = 800, threshold: Double = 0.002, loop: Bool = true) {
+    public init(fps: Double = 10, maxSize: MaxSize = .gifDefault, threshold: Double = 0.002, loop: Bool = true) {
         self.fps = fps
-        self.maxWidth = maxWidth
+        self.maxSize = maxSize
         self.threshold = threshold
         self.loop = loop
     }
@@ -28,6 +28,8 @@ public struct GIFResult: Sendable {
     public var duration: TimeInterval
     /// Most frames held in memory at once while converting.
     public var peakRetainedFrames: Int
+    /// Scaling, for a human; empty when the frames kept the video's size.
+    public var notes: [String] = []
 }
 
 public enum VideoConverter {
@@ -38,18 +40,24 @@ public enum VideoConverter {
         guard options.fps > 0, options.fps <= 60 else {
             throw MediaError.unreadable("--fps must be between 0 and 60")
         }
-        guard options.maxWidth > 0 else { throw MediaError.unreadable("--max-width must be positive") }
+        guard options.maxSize.width > 0, options.maxSize.height > 0 else {
+            throw MediaError.unreadable("--max-size must be positive")
+        }
         guard FileManager.default.fileExists(atPath: url.path) else {
             throw MediaError.unreadable("no such file: \(url.path)")
         }
 
         let asset = AVURLAsset(url: url)
         let duration: TimeInterval
+        let shown: CGSize
         do {
-            guard try await !asset.loadTracks(withMediaType: .video).isEmpty else {
+            guard let track = try await asset.loadTracks(withMediaType: .video).first else {
                 throw MediaError.unreadable("\(url.lastPathComponent) has no video track")
             }
             duration = try await asset.load(.duration).seconds
+            let (size, transform) = try await track.load(.naturalSize, .preferredTransform)
+            let rect = CGRect(origin: .zero, size: size).applying(transform)
+            shown = CGSize(width: rect.width.rounded(), height: rect.height.rounded())
         } catch let error as MediaError {
             throw error
         } catch {
@@ -63,19 +71,52 @@ public enum VideoConverter {
 
         let generator = AVAssetImageGenerator(asset: asset)
         generator.appliesPreferredTrackTransform = true
-        generator.maximumSize = CGSize(width: options.maxWidth, height: 0)
+        // As the picture is shown, so a preset box turns with a portrait one. A GIF
+        // has no even-side rule, so a side is not rounded off to suit H.264.
+        let fitted = options.maxSize.fit(shown, evenDimensions: false)
+        generator.maximumSize = fitted
         // Half a sample of slack: exact seeks cost a decode from the previous
         // keyframe each, and a screen recording is mostly keyframes' worth of sameness.
         let slack = CMTime(seconds: step / 2, preferredTimescale: 600)
         generator.requestedTimeToleranceBefore = slack
         generator.requestedTimeToleranceAfter = slack
 
-        return try await encode(sampleCount: count, duration: duration, options: options) { index in
+        // The frames as written, to name in the note.
+        var made: (width: Int, height: Int)?
+        var result = try await encode(sampleCount: count, duration: duration, options: options) { index in
             let time = CMTime(seconds: Double(index) * step, preferredTimescale: 600)
             // A frame that fails to decode is skipped; the previous one is held.
-            guard let image = try? await generator.image(at: time).image else { return nil }
+            guard let generated = try? await generator.image(at: time).image else { return nil }
+            // The generator keeps the shape exactly, so a side can come out a pixel
+            // or so short of the fitted box; such a frame is drawn to the box.
+            let image = resized(generated, to: fitted) ?? generated
+            if made == nil { made = (image.width, image.height) }
             return TimedFrame(image: image, time: time.seconds)
         }
+        if fitted != shown, let made {
+            result.notes.append(
+                "gif: scaled \(Int(shown.width))×\(Int(shown.height)) → \(made.width)×\(made.height) "
+                    + "(--max-size \(options.maxSize))")
+        }
+        return result
+    }
+
+    /// `image` drawn at `size`, or nil when it already is that size or cannot be drawn.
+    static func resized(_ image: CGImage, to size: CGSize) -> CGImage? {
+        let width = Int(size.width)
+        let height = Int(size.height)
+        guard width > 0, height > 0, image.width != width || image.height != height else { return nil }
+        let space =
+            image.colorSpace.flatMap { $0.model == .rgb ? $0 : nil }
+            ?? CGColorSpace(name: CGColorSpace.sRGB) ?? CGColorSpaceCreateDeviceRGB()
+        guard
+            let context = CGContext(
+                data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: 0, space: space,
+                bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)
+        else { return nil }
+        context.interpolationQuality = .high
+        context.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
+        return context.makeImage()
     }
 
     /// Pulls `sampleCount` frames one by one from `frame` and collapses them as

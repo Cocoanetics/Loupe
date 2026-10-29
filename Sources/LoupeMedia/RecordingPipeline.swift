@@ -13,14 +13,28 @@ public struct RecordingRequest: Sendable {
     public var appStore: Bool
     /// Which device class the preview is for. Nil picks by the picture's shape.
     public var family: AppStorePreview.Family?
+    /// The box the video is fitted into; nil keeps its native size, within
+    /// what H.264 takes. The GIF has its own, in ``GIFOptions/maxSize``.
+    public var maxSize: MaxSize?
 
     public init(
-        output: URL, gif: GIFOptions? = nil, appStore: Bool = false, family: AppStorePreview.Family? = nil
+        output: URL, gif: GIFOptions? = nil, appStore: Bool = false, family: AppStorePreview.Family? = nil,
+        maxSize: MaxSize? = nil
     ) {
         self.output = output
         self.gif = gif
         self.appStore = appStore
         self.family = family
+        self.maxSize = maxSize
+    }
+
+    /// Refuses what cannot be made: an App Store preview has its own exact sizes,
+    /// so a `--max-size` with it is a contradiction, not a choice to make silently.
+    public func validate() throws {
+        if appStore, maxSize != nil {
+            throw MediaError.unreadable(
+                "--appstore renders the exact App Preview sizes; drop --max-size, or record without --appstore")
+        }
     }
 
     public var gifOnly: Bool { output.pathExtension.lowercased() == "gif" }
@@ -72,6 +86,7 @@ public enum RecordingPipeline {
     public static func produce(
         _ request: RecordingRequest, film: (URL) async throws -> RecordingResult
     ) async throws -> RecordingProduct {
+        try request.validate()
         let raw = scratchURL("loupe-raw", "mov")
         let recording: RecordingResult
         do {
@@ -123,7 +138,10 @@ public enum RecordingPipeline {
                 from: raw, to: video, crop: crop, family: request.family)
             notes += done.notes
         } else {
-            notes += try await transcode(raw, to: video, crop: crop)
+            // A GIF is capped on its own, so only a video that is kept must not fall back past the box.
+            notes += try await transcode(
+                raw, to: video, crop: crop, maxSize: request.maxSize,
+                keepsSize: request.maxSize != nil && request.videoURL != nil)
         }
         let videoBytes = size(of: video)
         notes.append(
@@ -136,6 +154,7 @@ public enum RecordingPipeline {
         if let gifURL = request.gifURL {
             let result = try await VideoConverter.gif(from: video, options: request.gif ?? GIFOptions())
             try result.data.write(to: gifURL, options: .atomic)
+            notes += result.notes
             notes.append(
                 String(
                     format: "gif: %d of %d sampled frames kept over %.1fs, %@",
@@ -151,14 +170,23 @@ public enum RecordingPipeline {
     /// The screen-tuned H.264 pass, falling back to the recorder's own file: a
     /// recording is never lost to a tuning step. If even the copy fails there
     /// is no video, and that is an error, not a note.
-    private static func transcode(_ raw: URL, to video: URL, crop: ScreenCrop?) async throws -> [String] {
+    ///
+    /// With `keepsSize` there is no fallback: the original is larger than the
+    /// `--max-size` asked for, so the error stands and ``encode(_:as:)`` keeps the raw file.
+    private static func transcode(
+        _ raw: URL, to video: URL, crop: ScreenCrop?, maxSize: MaxSize?, keepsSize: Bool
+    ) async throws -> [String] {
         do {
-            let done = try await ScreenContentTranscoder.transcode(from: raw, to: video, crop: crop)
+            let done = try await ScreenContentTranscoder.transcode(from: raw, to: video, crop: crop, maxSize: maxSize)
             return ["h264: \(done.writtenFrames) of \(done.sourceFrames) frames written (variable frame rate)"]
                 + done.notes
         } catch {
             try? FileManager.default.removeItem(at: video)
             let reason = error.localizedDescription
+            if keepsSize, let maxSize {
+                throw MediaError.encodeFailed(
+                    "could not scale the video to --max-size \(maxSize) (\(reason)); the original is not that size")
+            }
             do {
                 try FileManager.default.copyItem(at: raw, to: video)
             } catch let copyError {
