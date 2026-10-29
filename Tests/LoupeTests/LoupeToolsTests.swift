@@ -143,7 +143,7 @@ struct RecordToolTests {
         func request(duration: String? = nil, until: String? = nil) -> LoupeMCPServer.RecordRequest {
             LoupeMCPServer.RecordRequest(
                 out: nil, duration: duration, until: until, region: nil, element: nil, gif: false, fps: nil,
-                maxWidth: nil, appStore: false, appStoreDevice: nil)
+                maxSize: nil, appStore: false, appStoreDevice: nil)
         }
         var tuned = request()
         tuned.tail = "2s"
@@ -181,7 +181,7 @@ struct RecordToolTests {
         let evidence = URL(fileURLWithPath: "/tmp/run-9/evidence", isDirectory: true)
         let request = LoupeMCPServer.RecordRequest(
             out: nil, duration: "1s", until: nil, region: nil, element: nil, gif: true, fps: nil,
-            maxWidth: nil, appStore: false, appStoreDevice: nil)
+            maxSize: nil, appStore: false, appStoreDevice: nil)
         let schema = await LoupeTools().mcpToolMetadata.first { $0.name == "loupe_record" }
         #expect(schema?.parameters.contains { $0.name == "steps" } == true)
         let target = try LoupeKit.Target.parse("sim:booted")

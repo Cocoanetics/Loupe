@@ -319,7 +319,10 @@ public actor LoupeMCPServer {
     /// - Parameter padding: Points added around `element` on every side, default 8.
     /// - Parameter gif: Also write an animated GIF next to the video.
     /// - Parameter fps: GIF: frames sampled per second, default 10.
-    /// - Parameter maxWidth: GIF: width in pixels, default 800.
+    /// - Parameter maxSize: Video and GIF: fit inside this box, keeping the shape and never
+    ///   scaling up. `WxH` (e.g. `1280x720`) as given, `N` for `NxN`, or `720p`, `1080p`,
+    ///   `1440p`, `4k`, which turn for a portrait picture. Default: the video stays native
+    ///   (within H.264's limit), the GIF fits `800x800`. Not with `appStore`.
     /// - Parameter threshold: GIF: how different a frame must be (0–1) to count as changed, default 0.002.
     /// - Parameter loop: GIF: play forever (default) or once.
     /// - Parameter appStore: Render an App Store preview instead: the accepted
@@ -351,7 +354,7 @@ public actor LoupeMCPServer {
         padding: Double? = nil,
         gif: Bool? = nil,
         fps: Double? = nil,
-        maxWidth: Int? = nil,
+        maxSize: String? = nil,
         threshold: Double? = nil,
         loop: Bool? = nil,
         appStore: Bool? = nil,
@@ -368,7 +371,7 @@ public actor LoupeMCPServer {
         }
         let request = RecordRequest(
             out: out, duration: duration, until: until, region: region, element: element,
-            gif: gif ?? false, fps: fps, maxWidth: maxWidth, appStore: appStore ?? false,
+            gif: gif ?? false, fps: fps, maxSize: maxSize, appStore: appStore ?? false,
             appStoreDevice: appStoreDevice, tail: tail, timeout: timeout, padding: padding,
             threshold: threshold, loop: loop)
         let stop = try request.stop(hasActions: !pending.isEmpty)

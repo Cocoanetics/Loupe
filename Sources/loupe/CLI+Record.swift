@@ -29,6 +29,12 @@ struct Record: AsyncParsableCommand {
             when `--out` ends in .gif). Frames that do not change are folded into one \
             frame held for the combined time, so a mostly still clip stays small.
 
+            `--max-size` fits the video and the GIF into a box, keeping the shape and \
+            never scaling up: `1280x720` as given, `800` for 800x800, or a preset \
+            (`720p`, `1080p`, `1440p`, `4k`) that turns with a portrait picture. Without it \
+            the video keeps its native size (scaled only past what H.264 takes) and the \
+            GIF fits 800x800.
+
             `--appstore` renders an App Store preview instead: the accepted resolution \
             for the device class, 30 fps, 15–30 s, H.264 with a silent stereo track, \
             and the simulator's status bar pinned to 9:41 while filming.
@@ -151,8 +157,9 @@ extension Record {
 
         func run() async throws {
             let parsed = try target.parsed()
-            guard output.out == nil, !output.gif else {
-                throw ValidationError("--out and --gif belong on `record \(parsed) stop`, which writes the files.")
+            guard output.out == nil, !output.gif, output.gifFlags.maxSize == nil else {
+                throw ValidationError(
+                    "--out, --gif and --max-size belong on `record \(parsed) stop`, which writes the files.")
             }
             let appstore = output.appstore
             let driver = try Record.session(parsed)
@@ -234,6 +241,9 @@ struct Convert: AsyncParsableCommand {
         let source = URL(fileURLWithPath: input)
         guard FileManager.default.fileExists(atPath: source.path) else {
             throw ValidationError("no such file: \(source.path)")
+        }
+        if appstore, gifFlags.maxSize != nil {
+            throw ValidationError("--appstore renders the exact App Preview sizes; --max-size cannot go with it.")
         }
         switch (gif, appstore) {
             case (true, false):
@@ -317,8 +327,11 @@ struct OutputFlags: ParsableArguments {
         }
         var family = appstoreDevice
         if family == nil, appstore, try Loupe.recordingSurface(of: target) == .mac { family = .mac }
-        return RecordingRequest(
-            output: output, gif: (gif || gifOnly) ? gifFlags.options : nil, appStore: appstore, family: family)
+        let request = RecordingRequest(
+            output: output, gif: (gif || gifOnly) ? gifFlags.options : nil, appStore: appstore, family: family,
+            maxSize: gifFlags.maxSize)
+        try request.validate()
+        return request
     }
 
     /// Paths on stdout, everything else on stderr, as `capture` does.
@@ -337,8 +350,17 @@ struct GIFFlags: ParsableArguments {
     @Option(help: "GIF: frames sampled per second of video.")
     var fps: Double = 10
 
-    @Option(name: .customLong("max-width"), help: "GIF: output width in pixels.")
-    var maxWidth: Int = 800
+    @Option(
+        name: .customLong("max-size"),
+        help: """
+            Video and GIF: fit inside this box, never scaling up — WxH (e.g. 1280x720), \
+            N for NxN, or 720p, 1080p, 1440p, 4k (turned for portrait). Default: video \
+            native, GIF 800x800. Not with --appstore.
+            """,
+        transform: { text in
+            do { return try MaxSize.parse(text) } catch { throw ValidationError(error.localizedDescription) }
+        })
+    var maxSize: MaxSize?
 
     @Option(help: "GIF: how different a frame must be (0–1, mean luminance) to count as changed.")
     var threshold: Double = 0.002
@@ -347,13 +369,14 @@ struct GIFFlags: ParsableArguments {
     var noLoop = false
 
     var options: GIFOptions {
-        GIFOptions(fps: fps, maxWidth: maxWidth, threshold: threshold, loop: !noLoop)
+        GIFOptions(fps: fps, maxSize: maxSize ?? .gifDefault, threshold: threshold, loop: !noLoop)
     }
 
     static func convert(_ video: URL, to destination: URL, flags: GIFFlags) async throws {
         let result = try await VideoConverter.gif(from: video, options: flags.options)
         try result.data.write(to: destination, options: .atomic)
         print(destination.path)
+        result.notes.forEach(OutputFlags.note)
         OutputFlags.note(
             String(
                 format: "gif: %d of %d sampled frames kept over %.1fs, %@",

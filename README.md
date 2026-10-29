@@ -529,8 +529,8 @@ loupe record @phone stop --out login.mp4 --gif
 ```
 
 The target comes first, as with every verb. `start` takes `--region`/`--element` and
-`--appstore` (pin the status bar, stop at 30 s); `stop` takes `--out`, `--gif` and
-`--appstore` (render the preview). Give `--appstore` to both for an App Store preview;
+`--appstore` (pin the status bar, stop at 30 s); `stop` takes `--out`, `--gif`,
+`--max-size` and `--appstore` (render the preview). Give `--appstore` to both for an App Store preview;
 `stop` says so in its notes if the status bar was left live. A recording nobody stops ends on its own at the 120 s limit, and
 closing the session finalizes it too.
 
@@ -554,8 +554,8 @@ requires. A later Mac recorder will use `SCStreamConfiguration.sourceRect` for t
 MP4 (H.264) is the primary format: GitHub and GitLab take it as an attachment, and
 X requires it. It is re-encoded for screen content after recording: H.264 High profile,
 variable frame rate (a sample is written only when the screen changed, so a still
-screen costs nothing), native resolution with no downscaling, and quality 0.85 so UI
-text stays sharp. HEVC and AV1 have screen-content tools but no VideoToolbox encoder
+screen costs nothing), native resolution with no downscaling unless asked for (or past
+H.264's 4096 limit, which a 5K window is), and quality 0.85 so UI text stays sharp. HEVC and AV1 have screen-content tools but no VideoToolbox encoder
 or broad playback; HEVC is only on the table for a later App Store preset. Every recording is bounded
 (120 s at most) and stopped with SIGINT so simctl finalizes the file; Loupe stops its
 `simctl` child on every exit path, except if Loupe itself is `kill -9`'d.
@@ -563,7 +563,25 @@ or broad playback; HEVC is only on the table for a later App Store preset. Every
 Where video cannot go (README, chat, email), `--gif` (or `--out run.gif`, or
 `loupe convert run.mp4 --gif`) makes an animated GIF. Frames that do not change are
 folded into one frame held for the combined time, so a 10 s clip with half a second of
-motion stays a few frames; `--fps`, `--max-width`, `--threshold` and `--no-loop` tune it.
+motion stays a few frames; `--fps`, `--max-size`, `--threshold` and `--no-loop` tune it.
+
+`--max-size` caps the video and the GIF alike. The picture is fitted inside the box with
+its shape kept, never scaled up, and with even sides for H.264:
+
+| Value | Box |
+|---|---|
+| `1280x720` | width ≤ 1280 and height ≤ 720, as given; never turned around |
+| `800` | `800x800`: the longest side ≤ 800 |
+| `720p`, `1080p`, `1440p`, `4k` | 1280×720, 1920×1080, 2560×1440, 3840×2160, turned for a portrait picture (720×1280, …) |
+
+```
+loupe record mac:Safari --duration 5s --max-size 720p --out small.mp4
+loupe record sim:booted --duration 5s --gif --max-size 600
+```
+
+Without it the video keeps its native size and the GIF fits `800x800`. When a picture is
+scaled, the notes say so: `h264: scaled 2560×1440 → 1280×720 (--max-size 720p)`.
+`--appstore` already makes exact App Preview sizes, so it refuses `--max-size`.
 APNG and WebP are not offered: ImageIO cannot encode WebP, and neither animates on X,
 so GIF is the one still-image format that plays everywhere.
 

@@ -255,7 +255,7 @@ extension Record {
     /// is forwarded, so the host records what this command line asked for.
     private func hostOptions() -> JSONDictionary {
         var out: JSONDictionary = [
-            "fps": .double(output.gifFlags.fps), "maxWidth": .integer(output.gifFlags.maxWidth),
+            "fps": .double(output.gifFlags.fps),
             "threshold": .double(output.gifFlags.threshold), "loop": .bool(!output.gifFlags.noLoop),
             "tail": .string(tail), "timeout": .double(timeout), "padding": .double(region.padding)
         ]
@@ -266,6 +266,7 @@ extension Record {
         if let path = output.out { out["out"] = .string(URL(fileURLWithPath: path).path) }
         if output.gif { out["gif"] = .bool(true) }
         if output.appstore { out["appStore"] = .bool(true) }
+        if let size = output.gifFlags.maxSize { out["maxSize"] = .string(size.description) }
         if let family = output.appstoreDevice { out["appStoreDevice"] = .string(family.rawValue) }
         return out
     }
