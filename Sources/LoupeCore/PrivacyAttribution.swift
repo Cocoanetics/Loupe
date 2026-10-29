@@ -55,13 +55,23 @@ public enum PrivacyAttribution {
 
     /// `/Applications/Foo.app/Contents/MacOS/foo` → `/Applications/Foo.app`.
     ///
-    /// The innermost bundle wins: Xcode's helpers live inside Xcode.app, but a
-    /// `claude.app` shipped inside another app's support folder is its own client.
+    /// The innermost bundle wins, unless it is a helper shipped in another
+    /// app's `Contents/Frameworks` or `Contents/Helpers` — VS Code's
+    /// `Code Helper.app`, Chrome's helpers inside its framework. TCC charges
+    /// those to the main app, and System Settings has no row for the helper.
+    /// An app elsewhere inside a bundle (Simulator.app in Xcode.app's
+    /// `Contents/Developer/Applications`) is its own client.
     static func appBundle(containing path: String) -> String? {
         guard let range = path.range(of: ".app/Contents/MacOS/", options: .backwards) else {
             return nil
         }
-        return String(path[..<range.lowerBound]) + ".app"
+        var bundle = String(path[..<range.lowerBound]) + ".app"
+        while let outer = bundle.range(of: ".app/Contents/", options: .backwards) {
+            let inside = bundle[outer.upperBound...]
+            guard inside.hasPrefix("Frameworks/") || inside.hasPrefix("Helpers/") else { break }
+            bundle = String(bundle[..<outer.lowerBound]) + ".app"
+        }
+        return bundle
     }
 
     private static func displayName(ofBundleAt path: String) -> String {

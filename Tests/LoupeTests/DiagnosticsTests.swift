@@ -158,6 +158,31 @@ struct PrivacyAttributionTests {
         #expect(client.isSelf)
     }
 
+    /// VS Code's integrated terminal runs under `Code Helper.app` inside the
+    /// main bundle's Frameworks; System Settings only lists Visual Studio Code.
+    @Test("an Electron helper is charged to the main app, not the helper")
+    func electronHelperBelongsToMainApp() {
+        let client = PrivacyAttribution.attribute(chain: [
+            "/usr/local/bin/loupe",
+            "/bin/zsh",
+            "/Applications/Visual Studio Code.app/Contents/Frameworks/Code Helper.app/Contents/MacOS/Code Helper",
+            "/Applications/Visual Studio Code.app/Contents/MacOS/Electron"
+        ])
+        #expect(client.path == "/Applications/Visual Studio Code.app")
+        #expect(!client.isSelf)
+    }
+
+    @Test("helpers nested in a framework climb to the outer app; other nested apps do not")
+    func nestedBundles() {
+        #expect(PrivacyAttribution.appBundle(containing:
+            "/Applications/Google Chrome.app/Contents/Frameworks/Google Chrome Framework.framework"
+            + "/Versions/1/Helpers/Google Chrome Helper.app/Contents/MacOS/Google Chrome Helper")
+            == "/Applications/Google Chrome.app")
+        #expect(PrivacyAttribution.appBundle(containing:
+            "/Applications/Xcode.app/Contents/Developer/Applications/Simulator.app/Contents/MacOS/Simulator")
+            == "/Applications/Xcode.app/Contents/Developer/Applications/Simulator.app")
+    }
+
     @Test("the Screen Recording remedy and note name the client, not loupe")
     func remedyNamesTheClient() {
         let client = PrivacyAttribution.Client(
