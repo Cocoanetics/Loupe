@@ -53,15 +53,16 @@ extension WebDriver {
     /// render at the scale it was asked for. Both capture areas start at 0,0, so
     /// the uncropped image's pixels are points times the achieved scale.
     private func keep(_ options: CaptureOptions, of attempt: CaptureAttempt, scale achieved: Double)
-        throws -> (png: Data, points: Frame, crop: CaptureCrop?) {
+        throws -> Kept {
         let rect = attempt.pointRect
         let whole = Frame(x: rect.minX, y: rect.minY, width: rect.width, height: rect.height)
-        guard let region = options.region else { return (attempt.snapshot.png, whole, nil) }
+        guard let region = options.region else { return Kept(png: attempt.snapshot.png, points: whole) }
         guard options.regionUnits == .pixels else {
             let pixels = Frame(
                 x: rect.minX * achieved, y: rect.minY * achieved,
                 width: rect.width * achieved, height: rect.height * achieved)
-            return (attempt.snapshot.png, whole, CaptureCrop(points: whole, pixels: pixels))
+            return Kept(
+                png: attempt.snapshot.png, points: whole, crop: CaptureCrop(points: whole, pixels: pixels))
         }
         let cut = try ImageOps.crop(
             attempt.snapshot.png,
@@ -72,7 +73,14 @@ extension WebDriver {
             width: cut.kept.width / scale, height: cut.kept.height / scale)
         let pixels = Frame(
             x: cut.kept.minX, y: cut.kept.minY, width: cut.kept.width, height: cut.kept.height)
-        return (cut.png, points, CaptureCrop(points: points, pixels: pixels))
+        return Kept(png: cut.png, points: points, crop: CaptureCrop(points: points, pixels: pixels))
+    }
+
+    /// What `keep` hands back: the image, the area it shows, and the crop if any.
+    private struct Kept {
+        var png: Data
+        var points: Frame
+        var crop: CaptureCrop?
     }
 
     /// One snapshot and the context needed to report it honestly: the CSS-pixel
