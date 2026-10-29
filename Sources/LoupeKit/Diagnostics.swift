@@ -45,16 +45,20 @@ public enum Diagnostics {
         /// The grant this check needs, when that is what is missing. Here so a
         /// caller can act on it rather than parse the remedy prose.
         public var grant: Grant?
+        /// Shown whether or not the check passed: something true either way
+        /// that the user would otherwise only learn from a surprise.
+        public var note: String?
 
         public init(
             name: String, ok: Bool, warningOnly: Bool = false, remedy: String? = nil,
-            grant: Grant? = nil
+            grant: Grant? = nil, note: String? = nil
         ) {
             self.name = name
             self.ok = ok
             self.warningOnly = warningOnly
             self.remedy = remedy
             self.grant = grant
+            self.note = note
         }
     }
 
@@ -76,6 +80,9 @@ public enum Diagnostics {
         /// Present when the caller asked for grants in the same run, so `--json`
         /// emits one object rather than prose followed by JSON.
         public var requested: [AccessResult]?
+        /// The app the Mac grants are charged to. Optional so a report from an
+        /// older Loupe host still decodes.
+        public var attributedTo: PrivacyAttribution.Client?
 
         public var missingGrants: [Grant] {
             surfaces.flatMap(\.checks).filter { !$0.ok }.compactMap(\.grant)
@@ -125,10 +132,11 @@ public enum Diagnostics {
 
     @MainActor
     public static func run() async -> Report {
-        let surfaces = [webSurface(), macSurface(), simulatorSurface()]
+        let client = PrivacyAttribution.current
+        let surfaces = [webSurface(), macSurface(client), simulatorSurface()]
         return Report(
             surfaces: surfaces, lines: render(surfaces),
-            allGood: surfaces.allSatisfy(\.ok), requested: nil)
+            allGood: surfaces.allSatisfy(\.ok), requested: nil, attributedTo: client)
     }
 
     /// The prose form, derived from the structure rather than built beside it.
@@ -136,7 +144,7 @@ public enum Diagnostics {
     /// One source of truth: when the two were assembled in parallel it was
     /// possible for a caller reading JSON and a person reading the terminal to
     /// be told different things.
-    private static func render(_ surfaces: [Surface]) -> [String] {
+    static func render(_ surfaces: [Surface]) -> [String] {
         var lines: [String] = []
         for surface in surfaces {
             if !lines.isEmpty { lines.append("") }
@@ -144,6 +152,7 @@ public enum Diagnostics {
             for check in surface.checks {
                 lines.append("\(check.ok ? "✓" : "✗") \(check.name)")
                 if !check.ok, let remedy = check.remedy { lines.append("    → \(remedy)") }
+                if let note = check.note { lines.append("    · \(note)") }
             }
         }
         return lines
@@ -158,7 +167,7 @@ public enum Diagnostics {
     }
 
     @MainActor
-    private static func macSurface() -> Surface {
+    private static func macSurface(_ client: PrivacyAttribution.Client) -> Surface {
         let locked =
             ((CGSessionCopyCurrentDictionary() as? [String: Any])?["CGSSessionScreenIsLocked"]
                 as? Int) == 1
@@ -169,7 +178,7 @@ public enum Diagnostics {
                     name: "Accessibility (read the element tree, press buttons)",
                     ok: isGranted(.accessibility),
                     remedy: "System Settings → Privacy & Security → Accessibility → add "
-                        + "\(executableName()). Grants bind to the code signature, so an unsigned "
+                        + "\(client.settingsEntry). Grants bind to the code signature, so an unsigned "
                         + "binary loses this on every rebuild. `loupe doctor --request` asks the "
                         + "system for it.",
                     grant: .accessibility),
@@ -179,13 +188,36 @@ public enum Diagnostics {
                         + "Accessibility keeps working, so describe and actions still run — only "
                         + "images are unavailable."),
                 Check(
-                    name: "Screen Recording (window screenshots)",
+                    name: "Screen Recording (window screenshots and recordings)",
                     ok: isGranted(.screenRecording),
-                    remedy: "System Settings → Privacy & Security → Screen & System Audio "
-                        + "Recording → add \(executableName()). `loupe doctor --request` asks the "
-                        + "system for it; the grant only reaches this process once it is restarted.",
-                    grant: .screenRecording)
+                    remedy: screenRecordingRemedy(client),
+                    grant: .screenRecording,
+                    note: screenRecordingNote(client))
             ])
+    }
+
+    static func screenRecordingRemedy(_ client: PrivacyAttribution.Client) -> String {
+        "System Settings → Privacy & Security → Screen & System Audio Recording → enable "
+            + "\(client.settingsEntry), then restart it. `loupe doctor --request` asks the system "
+            + "for it; the grant only reaches a process that starts after it."
+    }
+
+    /// The part `CGPreflightScreenCaptureAccess()` cannot see.
+    ///
+    /// With the grant in place, ScreenCaptureKit still puts up its own reminder
+    /// — "… is requesting to bypass the system private window picker" — the
+    /// first time a client captures and again every 30 to 90 days after that.
+    /// It is keyed by the client's path, so an app that updates itself into a
+    /// new versioned folder (Claude Code does) gets a fresh one per update. It
+    /// does not block: the capture that raised it completes. Nothing public
+    /// predicts it, and only the system picker avoids it, which needs a person
+    /// to choose the window — so the honest move is to say so up front.
+    static func screenRecordingNote(_ client: PrivacyAttribution.Client) -> String {
+        "macOS charges this grant to \(client.settingsEntry)"
+            + (client.isSelf ? "" : ", the app this process runs under — not to loupe itself")
+            + ". ScreenCaptureKit also shows its own reminder for that client on its first "
+            + "capture and about monthly after; it does not block the capture. Allowing it there "
+            + "keeps it quiet for the next period."
     }
 
     private static func simulatorSurface() -> Surface {
@@ -276,9 +308,6 @@ public enum Diagnostics {
             + (grant.appliesToRunningProcess ? "." : ", then restart this process.")
     }
 
-    private static func executableName() -> String {
-        (CommandLine.arguments.first as NSString?)?.lastPathComponent ?? "loupe"
-    }
 }
 
 /// Minimal simctl probe used by `doctor`, kept separate from the driver so a
