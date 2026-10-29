@@ -249,12 +249,12 @@ private final class FakeRecorder: RecordingDriver, @unchecked Sendable {
                 on: recorder,
                 Loupe.Session(
                     url: url, record: RecordOptions(maxDuration: 60), region: nil,
-                    actions: [.navigate("x")], stop: .after(5)))
+                    actions: [.navigate("x")], stop: .after(30)))
         }
         try await Task.sleep(for: .milliseconds(200))
         task.cancel()
         let result = try await task.value
-        // Ctrl-C is a graceful stop: finalized and returned, not 30s or 60s later.
+        // Ctrl-C is a graceful stop: finalized and returned, not after the 30s action or wait.
         #expect(ContinuousClock.now - started < .seconds(10))
         #expect(result.url == url)
         #expect(recorder.stopCount == 1)
