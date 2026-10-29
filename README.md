@@ -317,7 +317,10 @@ loupe capture mac:Mail --region 0,380,2800,320 --region-units pixels
 Over MCP, `regionUnits: "pixels"` is measured on the image `loupe_capture`
 returns, which is downscaled to at most 1400 px on its longest edge — so a band
 read off a returned 1400 px wide capture is `region: "0,380,1400,320"`. The CLI
-notes the crop it applied in both points and pixels.
+behaves the same way when `LOUPE_HOST` routes it to a host: its pixels are those
+of the host's downscaled image, which is also what it writes. Run locally, the
+CLI notes the crop it applied in both points and pixels; over `LOUPE_HOST` that
+note does not come back.
 
 ### Clicking by coordinate
 

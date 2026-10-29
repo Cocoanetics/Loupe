@@ -181,7 +181,9 @@ struct CaptureFlags: ParsableArguments {
             What --region is measured in: `points`, or `pixels` of the full-resolution \
             image the same capture writes uncropped (before --max-edge), so a rectangle \
             read off a full screenshot works as is. E.g. a band 380 px down a 2800 px wide \
-            capture: --region 0,380,2800,320 --region-units pixels.
+            capture: --region 0,380,2800,320 --region-units pixels. With LOUPE_HOST set, \
+            pixels are those of the host's image instead, downscaled to at most 1400 px on \
+            its longest edge — the image written here — and no crop note comes back.
             """)
     var regionUnits: RegionUnits = .points
 
