@@ -23,6 +23,10 @@ public struct Inventory: Codable, Sendable {
         /// The `#N` index of each entry in ``windows`` when a filter removed some;
         /// nil means the position is the index.
         public var windowIndices: [Int]?
+        /// Why ``windows`` could not be read — typically the app did not answer
+        /// Accessibility in time — so an empty list here means "unknown", not
+        /// "no windows". Nil when the windows were read.
+        public var windowsError: String?
     }
 
     public struct Simulator: Codable, Sendable {
@@ -47,9 +51,10 @@ public struct Inventory: Codable, Sendable {
     public static let simulatorTimeout: Double = 20
 
     /// The longest one app may take to answer one Accessibility request while
-    /// its windows are read. The system default is several seconds, which an app
-    /// that is busy (being driven by another Loupe, say) or hung spends in full.
-    static let accessibilityTimeout: Float = 1
+    /// its windows are read, by default. The system's own is several seconds,
+    /// which an app that is busy (being driven by another Loupe, say) or hung
+    /// spends in full — per app, in a listing of all of them.
+    public static let accessibilityTimeout: Float = 1
 
     /// Everything running and every simulator, read independently and at once:
     /// a stuck `simctl` cannot hold up the Mac apps, nor an unresponsive app the
@@ -57,10 +62,17 @@ public struct Inventory: Codable, Sendable {
     ///
     /// - Parameter simulators: false to skip `simctl` altogether, for callers
     ///   that only want the Mac apps.
-    public static func collect(simulators: Bool = true) async throws -> Inventory {
+    /// - Parameter accessibilityTimeout: Seconds each app gets per Accessibility
+    ///   request; 0 for the system default, for a caller that would rather wait
+    ///   on one busy app than report its windows as unknown.
+    public static func collect(
+        simulators: Bool = true, accessibilityTimeout: Float = accessibilityTimeout
+    ) async throws -> Inventory {
         async let listed = simulators ? listSimulators() : ([], nil)
         let trusted = AXIsProcessTrusted()
-        let apps = CallTrace.during("listing Mac apps") { macApps(trusted: trusted) }
+        let apps = CallTrace.during("listing Mac apps") {
+            macApps(trusted: trusted, timeout: accessibilityTimeout)
+        }
         let (devices, error) = await listed
         return Inventory(
             apps: apps, simulators: devices, simulatorsError: error, accessibilityTrusted: trusted)
@@ -70,25 +82,27 @@ public struct Inventory: Codable, Sendable {
     ///
     /// `runningApplications` is readable from any thread, so this stays off the
     /// main actor: whatever else this process has queued there cannot delay it.
-    private static func macApps(trusted: Bool) -> [App] {
+    private static func macApps(trusted: Bool, timeout: Float) -> [App] {
         let running = NSWorkspace.shared.runningApplications.filter {
             $0.activationPolicy == .regular && $0.bundleIdentifier != nil
         }
         return running.map { app in
             let name = app.localizedName ?? app.bundleIdentifier ?? "?"
             let pid = app.processIdentifier
-            let windows = trusted
-                ? CallTrace.during("reading the windows of \(name) (pid \(pid)) over Accessibility") {
-                    windowList(pid: pid)
+            var read = WindowRead(windows: [], error: nil)
+            if trusted {
+                read = CallTrace.during("reading the windows of \(name) (pid \(pid)) over Accessibility") {
+                    windowList(pid: pid, timeout: timeout)
                 }
-                : []
+            }
             return App(
                 name: name,
                 bundleID: app.bundleIdentifier,
                 pid: pid,
                 active: app.isActive,
-                windows: windows.map(\.title),
-                windowIDs: windows.map(\.id))
+                windows: read.windows.map(\.title),
+                windowIDs: read.windows.map(\.id),
+                windowsError: read.error)
         }
         .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
     }
@@ -142,25 +156,44 @@ public struct Inventory: Codable, Sendable {
 
     /// Window titles and stable ids (CGWindowID, 0 when unknown) via the
     /// accessibility API. Reading is enough — no activation, no raising, nothing
-    /// the user would notice — and each request gives up after
-    /// ``accessibilityTimeout`` rather than waiting on an app that does not answer.
-    private static func windowList(pid: pid_t) -> [(title: String, id: Int)] {
+    /// the user would notice — and each request gives up after `timeout` rather
+    /// than waiting on an app that does not answer.
+    ///
+    /// An app that did not answer comes back with an error rather than an empty
+    /// list, which would read as "no windows" — an app in the background.
+    private static func windowList(pid: pid_t, timeout: Float) -> WindowRead {
         let app = AXUIElementCreateApplication(pid)
-        AXUIElementSetMessagingTimeout(app, accessibilityTimeout)
+        AXUIElementSetMessagingTimeout(app, timeout)
         var value: CFTypeRef?
-        guard
-            AXUIElementCopyAttributeValue(app, kAXWindowsAttribute as CFString, &value)
-                == .success,
-            let windows = value as? [AXUIElement]
-        else { return [] }
-        return windows.map { window in
+        let status = AXUIElementCopyAttributeValue(app, kAXWindowsAttribute as CFString, &value)
+        switch status {
+            case .success: break
+            // Asked and answered: there is nothing to list.
+            case .noValue, .attributeUnsupported: return WindowRead(windows: [], error: nil)
+            case .cannotComplete:
+                let wait = timeout > 0 ? "within \(String(format: "%g", timeout))s" : "in time"
+                return WindowRead(
+                    windows: [], error: "the app did not answer Accessibility \(wait); its windows are unknown")
+            default:
+                return WindowRead(
+                    windows: [], error: "reading its windows over Accessibility failed (AXError \(status.rawValue))")
+        }
+        guard let windows = value as? [AXUIElement] else { return WindowRead(windows: [], error: nil) }
+        let list = windows.map { window in
             // Per element: the application's timeout does not carry over.
-            AXUIElementSetMessagingTimeout(window, accessibilityTimeout)
+            AXUIElementSetMessagingTimeout(window, timeout)
             var title: CFTypeRef?
             let text =
                 AXUIElementCopyAttributeValue(window, kAXTitleAttribute as CFString, &title) == .success
                 ? title as? String ?? "" : ""
             return (text, MacDriver.stableWindowID(of: window) ?? 0)
         }
+        return WindowRead(windows: list, error: nil)
+    }
+
+    /// One app's windows, or why they could not be read.
+    private struct WindowRead {
+        var windows: [(title: String, id: Int)]
+        var error: String?
     }
 }

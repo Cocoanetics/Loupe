@@ -184,7 +184,9 @@ extension AppBox {
             let reachable = (try? await driver().describe(DescribeOptions(maxDepth: 1))) != nil
             return reachable ? "runningForeground" : "notRunning"
         }
-        let inventory = try await Inventory.collect(simulators: false)
+        // The system's own Accessibility timeout, not the listing's short one: an
+        // app busy right after launch must not read as one with no windows.
+        let inventory = try await Inventory.collect(simulators: false, accessibilityTimeout: 0)
         let locator = target.locator
         guard
             let app = inventory.apps.first(where: {
@@ -192,6 +194,8 @@ extension AppBox {
                     || $0.name.caseInsensitiveCompare(locator) == .orderedSame
             })
         else { return "notRunning" }
+        // Windows still unknown: whether it is the active app is the next best answer.
+        if app.windowsError != nil { return app.active ? "runningForeground" : "runningBackground" }
         return app.windows.isEmpty ? "runningBackground" : "runningForeground"
     }
 }

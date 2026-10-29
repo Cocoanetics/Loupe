@@ -72,12 +72,18 @@ struct CallTraceTests {
     @Test func budgets() {
         #expect(LoupeMCPServer.budget(for: "loupe_list_targets", environment: [:]) == 60)
         #expect(LoupeMCPServer.budget(for: "loupe_capture", environment: [:]) == 240)
-        #expect(LoupeMCPServer.budget(for: "loupe_record", environment: [:]) == nil)
-        #expect(LoupeMCPServer.budget(for: "loupe_script", environment: [:]) == nil)
+        #expect(LoupeMCPServer.budget(for: "loupe_record", environment: [:]) == 360)
+        // A script's own timeout can be ignored by a loop that never suspends, so
+        // the call keeps an outer limit past it.
+        #expect(LoupeMCPServer.budget(for: "loupe_script", environment: [:]) == 180)
+        #expect(
+            LoupeMCPServer.budget(for: "loupe_script", arguments: ["timeout": .integer(600)], environment: [:])
+                == 660)
         let tight = ["LOUPE_CALL_TIMEOUT": "30"]
         #expect(LoupeMCPServer.budget(for: "loupe_list_targets", environment: tight) == 30)
         #expect(LoupeMCPServer.budget(for: "loupe_capture", environment: tight) == 30)
-        #expect(LoupeMCPServer.budget(for: "loupe_record", environment: tight) == nil)
+        #expect(LoupeMCPServer.budget(for: "loupe_record", environment: tight) == 360)
+        #expect(LoupeMCPServer.budget(for: "loupe_script", environment: tight) == 180)
     }
 
     @Test func logLinesCarryThePidAndCanBeTurnedOff() throws {
@@ -90,6 +96,20 @@ struct CallTraceTests {
         let text = try String(contentsOf: file, encoding: .utf8)
         #expect(text.contains("pid=\(ProcessInfo.processInfo.processIdentifier) #1 loupe_list_targets: start"))
         #expect(CallLog(environment: ["LOUPE_CALL_LOG": "off"]).path == nil)
+    }
+
+    @Test func interpolatedSecretsNeverReachTheLog() throws {
+        let secret = "tok-\(UUID().uuidString)"
+        let link = try EnvironmentInterpolation.expand(
+            "myapp://login?token={{LOUPE_TEST_TOKEN}}", environment: ["LOUPE_TEST_TOKEN": secret])
+        let file = FileManager.default.temporaryDirectory
+            .appendingPathComponent("loupe-calls-\(UUID().uuidString).log")
+        defer { try? FileManager.default.removeItem(at: file) }
+        CallLog(environment: ["LOUPE_CALL_LOG": file.path])
+            .write("#1 loupe_act: `xcrun simctl openurl booted \(link)`")
+        let text = try String(contentsOf: file, encoding: .utf8)
+        #expect(!text.contains(secret))
+        #expect(text.contains("myapp://login?token=••••"))
     }
 
     @Test func inventoryFromAnOlderHostStillDecodes() throws {

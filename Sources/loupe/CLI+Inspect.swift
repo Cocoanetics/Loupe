@@ -38,6 +38,7 @@ struct List: AsyncParsableCommand {
         for app in inventory.apps {
             let windows = app.windows.isEmpty ? "" : "  (\(app.windows.count) window(s))"
             print("  mac:\(app.name)\(windows)   \(app.bundleID ?? "")")
+            if let error = app.windowsError { print("    (\(error))") }
             for (position, title) in app.windows.enumerated() where !title.isEmpty {
                 let index = app.windowIndices?[position] ?? position
                 let id = position < app.windowIDs.count && app.windowIDs[position] != 0
