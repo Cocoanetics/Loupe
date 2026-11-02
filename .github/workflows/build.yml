@@ -16,6 +16,7 @@ on:
   pull_request:
     paths:
       - '.github/workflows/build.yml'
+      - '.github/tests/verify-swift-version.rb'
       - '**/*.swift'
       - 'Package.resolved'
   push:
@@ -27,18 +28,33 @@ concurrency:
 
 jobs:
   build-and-test:
-    runs-on: macos-latest
+    runs-on: xcode-27
     steps:
       - uses: actions/checkout@v6
 
-      - name: Show toolchain
-        run: swift --version
+      - uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: "27.1"
+
+      - name: Verify Swift version
+        shell: bash
+        run: |
+          version="$(swift --version)"
+          printf '%s\n' "$version"
+          if ! printf '%s\n' "$version" | grep -Eq '(^|[[:space:]])Swift version 6[.]4([.][0-9]+)?([[:space:]]|$)'; then
+            echo 'Expected Swift 6.4.x from Xcode 27.1' >&2
+            exit 1
+          fi
+
+      - name: Test Swift version guard
+        run: ruby .github/tests/verify-swift-version.rb
 
       # Most of a cold build is swift-syntax, pulled in through SwiftScript.
       #
-      # Keyed strictly on the resolved pins, with no `restore-keys` fallback on
-      # purpose: a partially-matching `.build` is how you get a module cache that
-      # disagrees with the checked-out dependencies, which surfaces as
+      # Keyed strictly on the architecture, toolchain and resolved pins. No
+      # `restore-keys` fallback on purpose: a partially-matching `.build` is how
+      # you get a module cache that disagrees with the checked-out dependencies,
+      # which surfaces as
       # `missing required module '_SwiftSyntaxCShims'` rather than as anything
       # resembling its cause. A dependency bump paying for one cold build is the
       # cheaper mistake.
@@ -46,7 +62,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: .build
-          key: ${{ runner.os }}-spm-${{ hashFiles('Package.resolved') }}
+          key: ${{ runner.os }}-${{ runner.arch }}-spm-xcode-27.1-swift-6.4-${{ hashFiles('Package.resolved') }}
 
       # `--build-tests` covers the library, the executable and the test targets
       # in one pass, so a compile error anywhere fails here rather than later.
