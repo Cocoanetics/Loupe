@@ -163,9 +163,6 @@ extension Bridge {
 
         let port = try freePort()
         let token = UUID().uuidString
-        let platform =
-            "/Applications/Xcode.app/Contents/Developer/Platforms/iPhoneSimulator.platform"
-
         let bridge = Bridge(udid: udid, port: port, token: token)
 
         // Always started through xcodebuild, never by launching the runner

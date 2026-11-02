@@ -26,7 +26,7 @@ public struct LoupeCallContext: Sendable {
 
     /// Run `body` with this context in effect for every tool call inside it.
     public func perform<T: Sendable>(_ body: @Sendable () async throws -> T) async rethrows -> T {
-        try await Self.$current.withValue(self, operation: body)
+        try await Self.$current.withValue(self) { try await body() }
     }
 
     /// A path from a call, made absolute against the working directory when it has
