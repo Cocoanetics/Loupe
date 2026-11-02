@@ -30,8 +30,6 @@ enum SessionLauncher {
     static func open(_ request: Request) async throws {
         let target = request.target
         let name = request.name
-        let viewport = request.viewport
-        let profile = request.profile
         guard target.surface != .live else {
             throw LoupeError.failed("cannot open a session on another session")
         }

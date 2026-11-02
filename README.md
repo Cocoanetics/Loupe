@@ -692,7 +692,8 @@ Accessibility and Screen Recording are session-scoped.
 
 ## Requirements
 
-macOS 14+, Swift 6. Xcode for the simulator surface. No third-party
+macOS 14+, Swift 6. CI builds and tests with Swift 6.4 on Xcode 27.1; earlier
+versions are untested. Xcode for the simulator surface. No third-party
 dependencies beyond `swift-argument-parser` and `SwiftMCP`.
 
 ## Design notes
